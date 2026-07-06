@@ -167,7 +167,26 @@ npm run smoke:verify  # real-LLM verification closed-loop smoke
 npm run smoke:edit    # real-LLM CRLF edit smoke
 npm run smoke:compact # real-LLM context-compaction smoke
 npm run eval          # real-LLM eval suite (scored, per-provider)
+npm run check         # the full gate: typecheck + build + test + eval --strict
 ```
+
+### Pre-push gate
+
+A git `pre-push` hook runs the full pipeline automatically on every `git push`
+so quality is enforced without anyone remembering to run it:
+
+```
+typecheck → build → tests → eval suite (real-LLM, --strict)
+```
+
+The hook is installed automatically by the `prepare` script on `npm install`
+(it copies `.githooks/pre-push` into `.git/hooks/`; run `node scripts/install-hooks.mjs`
+to (re)install manually). The eval step needs a configured provider key.
+
+Bypass when necessary:
+
+- `SCISSOR_SKIP_EVAL=1 git push` — skip only the eval suite (still runs typecheck/build/tests).
+- `git push --no-verify` — skip the hook entirely (discouraged).
 
 ## License
 

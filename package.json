@@ -24,6 +24,8 @@
     "smoke:edit": "node --import tsx scripts/smoke-edit.mts",
     "smoke:compact": "node --import tsx scripts/smoke-compact.mts",
     "eval": "node --import tsx scripts/eval.mts",
+    "check": "npm run typecheck && npm run build && npm test && npm run eval -- --strict",
+    "prepare": "node scripts/install-hooks.mjs",
     "clean": "rimraf packages/*/dist"
   },
   "devDependencies": {
