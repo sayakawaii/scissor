@@ -42,7 +42,26 @@ export interface AgentCallbacks {
   onVerifyStart?(): void;
   /** Automated verification finished. */
   onVerifyResult?(result: VerificationResult): void;
+  /** Conversation history was compacted into a summary. */
+  onCompact?(info: CompactionInfo): void;
 }
+
+export interface CompactionInfo {
+  /** Number of messages folded into the summary. */
+  summarizedMessages: number;
+  /** Approx. characters before and after compaction. */
+  beforeChars: number;
+  afterChars: number;
+}
+
+/**
+ * Summarizes a slice of conversation into compact prose. Provided for tests;
+ * otherwise the agent summarizes with its own provider.
+ */
+export type SummarizeFn = (messages: Message[]) => Promise<string>;
+
+const SUMMARY_MARKER = "[Summary of earlier conversation]";
+const COMPACT_REQUEST = "(Earlier conversation was summarized to save context.)";
 
 export interface AgentOptions {
   provider: LLMProvider;
@@ -69,6 +88,17 @@ export interface AgentOptions {
   verify?: VerifyFn;
   /** Max automated verification runs per request (default 2). */
   maxVerifyAttempts?: number;
+  /**
+   * When the conversation grows past this many characters, the oldest rounds are
+   * summarized into a compact note instead of being dropped. Defaults to 70% of
+   * maxContextChars. Set autoCompact:false to disable.
+   */
+  compactThreshold?: number;
+  autoCompact?: boolean;
+  /** Custom summarizer (defaults to summarizing via the provider). */
+  summarize?: SummarizeFn;
+  /** Workspace-relative file used by the `remember` tool for long-term memory. */
+  memoryFile?: string;
 }
 
 export interface RunResult {
@@ -95,6 +125,10 @@ export class Agent {
   private protectedPaths: string[];
   private verify?: VerifyFn;
   private maxVerifyAttempts: number;
+  private autoCompact: boolean;
+  private compactThreshold: number;
+  private summarize: SummarizeFn;
+  private memoryFile?: string;
   /** Set when restart_self is invoked during a run. */
   private pendingRestart?: { reason: string };
   /** Tools the user chose to "always" approve during this session. */
@@ -111,6 +145,10 @@ export class Agent {
     this.protectedPaths = opts.protectedPaths ?? [];
     this.verify = opts.verify;
     this.maxVerifyAttempts = opts.maxVerifyAttempts ?? 2;
+    this.autoCompact = opts.autoCompact ?? true;
+    this.compactThreshold = opts.compactThreshold ?? Math.floor(this.maxContextChars * 0.7);
+    this.summarize = opts.summarize ?? ((msgs) => this.summarizeWithProvider(msgs));
+    this.memoryFile = opts.memoryFile;
     const system =
       opts.systemPrompt ??
       buildSystemPrompt({
@@ -152,6 +190,7 @@ export class Agent {
       workspaceRoot: this.workspaceRoot,
       signal,
       protectedPaths: this.protectedPaths,
+      memoryFile: this.memoryFile,
     };
     let finalText = "";
     let turn = 0;
@@ -159,11 +198,16 @@ export class Agent {
     const editedFiles = new Set<string>();
     let editsSinceVerify = false;
     let verifyAttempts = 0;
+    let compactionFailed = false;
 
     while (turn < this.maxTurns) {
       if (signal?.aborted) return { finalText, turns: turn, aborted: true };
       turn += 1;
       callbacks.onTurnStart?.(turn);
+      if (this.autoCompact && !compactionFailed && this.contextSize() > this.compactThreshold) {
+        const ok = await this.compactOldest(callbacks, signal);
+        if (!ok) compactionFailed = true;
+      }
       this.trimContext();
 
       const result = await this.provider.chat({
@@ -253,6 +297,26 @@ export class Agent {
     }
 
     return { finalText, turns: turn, aborted: false };
+  }
+
+  /**
+   * Execute a single tool directly (e.g. from a slash command), with the normal
+   * approval gate. Does not add anything to the conversation transcript.
+   */
+  async runTool(
+    name: string,
+    args: Record<string, unknown>,
+    callbacks: AgentCallbacks = {},
+    signal?: AbortSignal,
+  ): Promise<ToolResult> {
+    const ctx: ToolContext = {
+      workspaceRoot: this.workspaceRoot,
+      signal,
+      protectedPaths: this.protectedPaths,
+      memoryFile: this.memoryFile,
+    };
+    const call: ToolCall = { id: `manual-${Date.now()}`, name, arguments: args };
+    return this.handleToolCall(call, ctx, callbacks, signal);
   }
 
   private async handleToolCall(
@@ -348,22 +412,140 @@ export class Agent {
     return result;
   }
 
+  /** Approximate character size of the whole conversation. */
+  private contextSize(): number {
+    return this.messages.reduce(
+      (n, m) =>
+        n + m.content.length + (m.toolCalls ? JSON.stringify(m.toolCalls).length : 0),
+      0,
+    );
+  }
+
+  /**
+   * Manually compact the conversation: summarize everything except the most
+   * recent round into a note. Returns true if anything was compacted.
+   */
+  async compact(callbacks: AgentCallbacks = {}, signal?: AbortSignal): Promise<boolean> {
+    const lastRoundStart = this.lastUserRoundStart();
+    if (lastRoundStart <= 1) return false;
+    return this.compactRange(1, lastRoundStart, callbacks, signal);
+  }
+
+  /** Auto-compaction: fold old rounds, keeping a recent window intact. */
+  private async compactOldest(callbacks: AgentCallbacks, signal?: AbortSignal): Promise<boolean> {
+    const keepChars = Math.floor(this.maxContextChars * 0.5);
+    // Walk backwards to a round boundary once we've kept ~keepChars recent.
+    let acc = 0;
+    let splitIndex = this.messages.length;
+    for (let i = this.messages.length - 1; i >= 1; i--) {
+      const m = this.messages[i]!;
+      acc += m.content.length + (m.toolCalls ? JSON.stringify(m.toolCalls).length : 0);
+      if (acc >= keepChars && m.role === "user") {
+        splitIndex = i;
+        break;
+      }
+    }
+    if (splitIndex <= 1 || splitIndex >= this.messages.length) return false;
+    return this.compactRange(1, splitIndex, callbacks, signal);
+  }
+
+  /** Index of the user message that starts the final round (or 1). */
+  private lastUserRoundStart(): number {
+    for (let i = this.messages.length - 1; i >= 1; i--) {
+      if (this.messages[i]!.role === "user") return i;
+    }
+    return 1;
+  }
+
+  /**
+   * Summarize messages[start, end) into a single user+assistant note pair and
+   * splice it in. Whole rounds are compacted so tool_call/tool_result pairs stay
+   * valid. On summarizer failure, falls back to the hard drop (trimContext).
+   */
+  private async compactRange(
+    start: number,
+    end: number,
+    callbacks: AgentCallbacks,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const slice = this.messages.slice(start, end);
+    if (slice.length === 0) return false;
+    const beforeChars = this.contextSize();
+    let summary: string;
+    try {
+      summary = await this.summarize(slice);
+    } catch {
+      return false;
+    }
+    if (signal?.aborted) return false;
+    if (!summary.trim()) return false;
+    const replacement: Message[] = [
+      { role: "user", content: COMPACT_REQUEST },
+      { role: "assistant", content: `${SUMMARY_MARKER}\n${summary.trim()}` },
+    ];
+    this.messages.splice(start, end - start, ...replacement);
+    callbacks.onCompact?.({
+      summarizedMessages: slice.length,
+      beforeChars,
+      afterChars: this.contextSize(),
+    });
+    return true;
+  }
+
+  /** Default summarizer: a single, tool-free provider call. */
+  private async summarizeWithProvider(slice: Message[]): Promise<string> {
+    const transcript = slice
+      .map((m) => {
+        if (m.role === "user") return `User: ${m.content}`;
+        if (m.role === "assistant") {
+          const calls = m.toolCalls?.length
+            ? ` [called: ${m.toolCalls.map((c) => c.name).join(", ")}]`
+            : "";
+          return `Assistant: ${m.content}${calls}`;
+        }
+        if (m.role === "tool") {
+          return `Tool(${m.name ?? "?"}): ${m.content.slice(0, 400)}`;
+        }
+        return `${m.role}: ${m.content}`;
+      })
+      .join("\n");
+    const result = await this.provider.chat({
+      messages: [
+        {
+          role: "system",
+          content:
+            "You compress a coding session transcript into a compact briefing that lets the assistant continue seamlessly. Preserve: the user's goals and constraints, decisions made, files created/edited and key code facts, commands run and their outcomes, and any open TODOs or unresolved errors. Omit chit-chat. Use terse bullet points.",
+        },
+        {
+          role: "user",
+          content: `Summarize this conversation so far:\n\n---\n${transcript}\n---`,
+        },
+      ],
+      tools: [],
+    });
+    return result.text;
+  }
+
   /**
    * Drop the oldest complete conversation rounds when the total size exceeds
    * the budget. A "round" starts at a user message; dropping whole rounds keeps
-   * assistant tool_call / tool_result pairs valid.
+   * assistant tool_call / tool_result pairs valid. This is the hard fallback
+   * after compaction (or when auto-compaction is disabled).
    */
   private trimContext(): void {
-    const size = () =>
-      this.messages.reduce(
-        (n, m) =>
-          n +
-          m.content.length +
-          (m.toolCalls ? JSON.stringify(m.toolCalls).length : 0),
-        0,
+    while (this.contextSize() > this.maxContextChars) {
+      // Preserve a leading rolling-summary pair (compaction output) so the
+      // condensed history isn't discarded; drop the next oldest real round.
+      let searchStart = 1;
+      if (
+        this.messages[1]?.content === COMPACT_REQUEST &&
+        this.messages[2]?.content.startsWith(SUMMARY_MARKER)
+      ) {
+        searchStart = 3;
+      }
+      const firstUser = this.messages.findIndex(
+        (m, i) => i >= searchStart && m.role === "user",
       );
-    while (size() > this.maxContextChars) {
-      const firstUser = this.messages.findIndex((m, i) => i >= 1 && m.role === "user");
       if (firstUser === -1) break;
       const nextUser = this.messages.findIndex(
         (m, i) => i > firstUser && m.role === "user",

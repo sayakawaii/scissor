@@ -1,12 +1,14 @@
 import type { Tool } from "../types.js";
 import { askUserTool, presentPlanTool, restartSelfTool } from "./control.js";
 import { readFileTool } from "./read-file.js";
+import { rememberTool } from "./remember.js";
 import { retrieveTool } from "./retrieve.js";
 import { globTool, grepTool } from "./search.js";
 import { runShellTool } from "./shell.js";
 import { editFileTool, writeFileTool } from "./write-file.js";
 
 export { readFileTool } from "./read-file.js";
+export { rememberTool, appendUnderLearned } from "./remember.js";
 export { retrieveTool } from "./retrieve.js";
 export { globTool, grepTool } from "./search.js";
 export { runShellTool } from "./shell.js";
@@ -34,6 +36,7 @@ export function defaultTools(opts: ToolSetOptions = {}): Tool[] {
     writeFileTool,
     editFileTool,
     runShellTool,
+    rememberTool,
     askUserTool,
     presentPlanTool,
   ];

@@ -102,6 +102,7 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     initialMessages: opts.resume?.messages,
     protectedPaths: selfEdit ? SELF_PROTECTED_PATHS : [],
     verify,
+    memoryFile: MEMORY_FILENAME,
   });
 
   const model = resolveModel(config, providerId);
@@ -183,6 +184,17 @@ export class TurnRenderer {
     this.atLineStart = true;
   };
 
+  onCompact = (info: { summarizedMessages: number; beforeChars: number; afterChars: number }): void => {
+    this.ensureNewline();
+    const saved = Math.max(0, info.beforeChars - info.afterChars);
+    process.stdout.write(
+      theme.info(
+        `\u2b07 compacted ${info.summarizedMessages} messages into a summary (~${saved} chars saved)`,
+      ) + "\n",
+    );
+    this.streamedThisTurn = false;
+  };
+
   finish(): void {
     this.ensureNewline();
   }
@@ -200,6 +212,7 @@ export function makeCallbacks(renderer: TurnRenderer) {
     onPresentPlan: promptPlan,
     onVerifyStart: renderer.onVerifyStart,
     onVerifyResult: renderer.onVerifyResult,
+    onCompact: renderer.onCompact,
   };
 }
 

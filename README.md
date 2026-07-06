@@ -58,7 +58,7 @@ Options:
 - `--chat-only` — disable file edits and command execution
 - `--no-verify` — disable the automated verification closed-loop
 
-REPL slash commands: `/help`, `/reset`, `/info`, `/exit`.
+REPL slash commands: `/help`, `/reset`, `/compact`, `/remember <fact>`, `/info`, `/exit`.
 
 ## Codebase retrieval
 
@@ -98,6 +98,16 @@ metadata). List them with `scissor sessions` and continue one with
 `scissor --resume <id>`. A `SCISSOR_MEMORY.md` file in the workspace, if present,
 is injected into the system prompt as long-term memory.
 
+**Long-term memory:** the agent can save durable facts (conventions, key
+commands, gotchas) to `SCISSOR_MEMORY.md` via the `remember` tool, or you can add
+one yourself with `/remember <fact>`. These are loaded into context in future
+sessions.
+
+**Context compaction:** when a conversation grows past a threshold, scissor
+summarizes the oldest rounds into a rolling "summary of earlier conversation"
+note (via the LLM) instead of dropping them, so long sessions keep their context.
+Trigger it manually with `/compact`.
+
 ## Self-iteration (experimental)
 
 scissor can modify and reload its **own** source code under a supervisor that
@@ -131,12 +141,13 @@ By default scissor uses a **plan-gate** flow: for non-trivial work it presents a
 npm install
 npm run typecheck     # non-emitting type check
 npm run build         # tsup build (also used by the self-update verification gate)
-npm test              # deterministic tests (session, supervisor, retrieval, verify, edits)
+npm test              # deterministic tests (session, supervisor, retrieval, verify, edits, compaction, memory)
 npm run smoke         # real-LLM tool-loop smoke (needs a provider key)
 npm run smoke:plan    # real-LLM plan-gate smoke
 npm run smoke:restart # real-LLM restart_self smoke
 npm run smoke:verify  # real-LLM verification closed-loop smoke
 npm run smoke:edit    # real-LLM CRLF edit smoke
+npm run smoke:compact # real-LLM context-compaction smoke
 ```
 
 ## License

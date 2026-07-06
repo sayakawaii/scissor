@@ -54,11 +54,16 @@ may not do.
 
 Current trimming just drops old rounds. Better:
 
-- Summarize dropped history into a rolling "what happened so far" note instead of
-  discarding it (a `/compact` equivalent).
-- Separate short-term (conversation) from long-term (`SCISSOR_MEMORY.md`) memory;
-  auto-propose additions to long-term memory when durable facts are learned.
-- Sub-agents for large tasks (spawn a focused child agent, return a summary).
+- [x] Summarize old history into a rolling "what happened so far" note instead of
+  discarding it, automatically past a threshold and via `/compact`. The rolling
+  summary is protected from the hard-trim fallback. (`Agent` compaction in
+  `packages/core/src/agent.ts`)
+- [x] Long-term memory: the `remember` tool (and `/remember`) append durable
+  facts to `SCISSOR_MEMORY.md`, which is loaded into future sessions.
+  (`packages/core/src/tools/remember.ts`)
+- [ ] Auto-propose long-term memory additions (currently the agent must choose to
+  call `remember`); detect durable facts and suggest saving them.
+- [ ] Sub-agents for large tasks (spawn a focused child agent, return a summary).
 
 ## 5. Checkpoints & undo (beyond git)
 

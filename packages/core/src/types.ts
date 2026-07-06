@@ -52,6 +52,8 @@ export interface ToolContext {
    * Used in self-edit mode to protect the safety machinery (supervisor, etc.).
    */
   protectedPaths?: string[];
+  /** Workspace-relative long-term memory file used by the `remember` tool. */
+  memoryFile?: string;
 }
 
 /** A tool the agent can call. */

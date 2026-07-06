@@ -131,7 +131,7 @@ async function replLoop(session: Session, loopOpts: LoopOptions): Promise<number
     if (trimmed.length === 0) continue;
 
     if (trimmed.startsWith("/")) {
-      const done = handleSlash(trimmed, session);
+      const done = await handleSlash(trimmed, session);
       if (done === "exit") {
         if (loopOpts.persist) await persistSession(session).catch(() => {});
         process.stdout.write(theme.dim("Bye.\n"));
@@ -183,7 +183,7 @@ function printHeader(session: Session, selfEdit: boolean): void {
   process.stdout.write(theme.dim("Type your request. /help for commands, /exit to quit.\n"));
 }
 
-function handleSlash(cmd: string, session: Session): "exit" | "continue" {
+async function handleSlash(cmd: string, session: Session): Promise<"exit" | "continue"> {
   const [name] = cmd.slice(1).split(/\s+/);
   switch (name) {
     case "exit":
@@ -194,14 +194,36 @@ function handleSlash(cmd: string, session: Session): "exit" | "continue" {
       session.agent.reset();
       process.stdout.write(theme.ok("Conversation reset.\n"));
       return "continue";
+    case "compact": {
+      const renderer = new TurnRenderer();
+      const did = await session.agent.compact({ onCompact: renderer.onCompact });
+      renderer.finish();
+      if (!did) process.stdout.write(theme.dim("Nothing to compact yet.\n"));
+      await persistSession(session).catch(() => {});
+      return "continue";
+    }
+    case "remember": {
+      const fact = cmd.slice(1).replace(/^remember\s*/, "").trim();
+      if (!fact) {
+        process.stdout.write(theme.warn("Usage: /remember <fact to save>\n"));
+        return "continue";
+      }
+      const renderer = new TurnRenderer();
+      const result = await session.agent.runTool("remember", { fact }, makeCallbacks(renderer));
+      renderer.finish();
+      process.stdout.write((result.isError ? theme.err : theme.ok)(result.content) + "\n");
+      return "continue";
+    }
     case "help":
       process.stdout.write(
         [
           theme.bold("Commands:"),
-          "  /help          show this help",
-          "  /reset         clear conversation history",
-          "  /info          show provider and workspace info",
-          "  /exit          quit",
+          "  /help              show this help",
+          "  /reset             clear conversation history",
+          "  /compact           summarize the conversation so far to save context",
+          "  /remember <fact>   save a durable fact to long-term memory",
+          "  /info              show provider and workspace info",
+          "  /exit              quit",
           "",
           theme.dim("Just type normally to talk to the agent."),
           "",
