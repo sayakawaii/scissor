@@ -1,11 +1,13 @@
 import type { Tool } from "../types.js";
 import { askUserTool, presentPlanTool, restartSelfTool } from "./control.js";
 import { readFileTool } from "./read-file.js";
+import { retrieveTool } from "./retrieve.js";
 import { globTool, grepTool } from "./search.js";
 import { runShellTool } from "./shell.js";
 import { editFileTool, writeFileTool } from "./write-file.js";
 
 export { readFileTool } from "./read-file.js";
+export { retrieveTool } from "./retrieve.js";
 export { globTool, grepTool } from "./search.js";
 export { runShellTool } from "./shell.js";
 export { editFileTool, writeFileTool } from "./write-file.js";
@@ -26,6 +28,7 @@ export interface ToolSetOptions {
 export function defaultTools(opts: ToolSetOptions = {}): Tool[] {
   const tools: Tool[] = [
     readFileTool,
+    retrieveTool,
     globTool,
     grepTool,
     writeFileTool,
@@ -40,5 +43,5 @@ export function defaultTools(opts: ToolSetOptions = {}): Tool[] {
 
 /** Chat-only tool set: no file mutation or command execution. */
 export function chatTools(): Tool[] {
-  return [readFileTool, globTool, grepTool, askUserTool];
+  return [readFileTool, retrieveTool, globTool, grepTool, askUserTool];
 }

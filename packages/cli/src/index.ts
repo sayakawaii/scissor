@@ -26,6 +26,8 @@ interface GlobalOpts {
   auto?: boolean;
   chatOnly?: boolean;
   resume?: string;
+  /** commander sets this to false when --no-verify is passed. */
+  verify?: boolean;
 }
 
 function resolveProvider(value: string | undefined): ProviderId | undefined {
@@ -49,6 +51,7 @@ function toChatOptions(opts: GlobalOpts): ChatOptions {
     approvalPolicy: resolvePolicy(opts),
     chatOnly: opts.chatOnly,
     resume: opts.resume,
+    noVerify: opts.verify === false,
   };
 }
 
@@ -62,6 +65,7 @@ program
   .option("--safe", "confirm every file change and command before running")
   .option("--auto", "run everything automatically (only confirm dangerous actions)")
   .option("--chat-only", "disable file edits and command execution")
+  .option("--no-verify", "disable the automated verification closed-loop")
   .option("--resume <id>", "resume a saved session by id or file path")
   .argument("[prompt...]", "prompt to run once, then exit (omit for interactive mode)")
   .action(async (promptParts: string[], opts: GlobalOpts) => {

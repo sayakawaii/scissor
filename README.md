@@ -56,8 +56,28 @@ Options:
 - `--safe` — confirm every file change and command
 - `--auto` — run everything automatically (only confirm dangerous actions)
 - `--chat-only` — disable file edits and command execution
+- `--no-verify` — disable the automated verification closed-loop
 
 REPL slash commands: `/help`, `/reset`, `/info`, `/exit`.
+
+## Codebase retrieval
+
+At session start scissor builds a compact **repo map** (directory tree + top-level
+symbols, respecting `.gitignore`) and injects it into the system prompt, so the
+agent begins with an overview instead of blindly grepping. It also has a
+`retrieve` tool: ranked keyword search across the workspace that returns the most
+relevant files and matching lines for a natural-language query — better than a
+single `grep` for "where is X handled" questions.
+
+## Verification closed-loop
+
+When the agent finishes a request in which it edited files, scissor automatically
+runs the project's checks and, if they fail, feeds the output back so the agent
+can self-correct (bounded by `maxVerifyAttempts`, default 2). Checks are detected
+from `package.json` scripts (`typecheck`/`type-check`/`tsc`, then `lint`).
+
+- Override the commands with `SCISSOR_VERIFY_COMMANDS="cmd1;cmd2"`.
+- Disable per-run with `--no-verify`, or globally with `SCISSOR_NO_VERIFY=1`.
 
 ## Sessions & memory
 
@@ -99,10 +119,11 @@ By default scissor uses a **plan-gate** flow: for non-trivial work it presents a
 npm install
 npm run typecheck     # non-emitting type check
 npm run build         # tsup build (also used by the self-update verification gate)
-npm test              # deterministic tests (session round-trip, supervisor protocol)
+npm test              # deterministic tests (session, supervisor, retrieval, verify loop)
 npm run smoke         # real-LLM tool-loop smoke (needs a provider key)
 npm run smoke:plan    # real-LLM plan-gate smoke
 npm run smoke:restart # real-LLM restart_self smoke
+npm run smoke:verify  # real-LLM verification closed-loop smoke
 ```
 
 ## License

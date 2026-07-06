@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   Agent,
   applyEnvOverrides,
+  buildRepoMap,
   buildSystemPrompt,
   createProvider,
   defaultTools,
@@ -17,6 +18,7 @@ import {
   type ScissorConfig,
   type SessionData,
 } from "@scissor/core";
+import { makeVerifier } from "./verify-project.js";
 import {
   banner,
   formatToolCallHeader,
@@ -43,6 +45,8 @@ export interface SessionOptions {
   selfEdit?: boolean;
   /** Resume from a previously saved session. */
   resume?: SessionData;
+  /** Disable the automated verification closed-loop. */
+  noVerify?: boolean;
 }
 
 export interface Session {
@@ -73,13 +77,20 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
   const selfEdit = opts.selfEdit ?? false;
 
   const memory = await readMemory(workspaceRoot);
+  const repoMap = await buildRepoMap(workspaceRoot).catch(() => "");
   const systemPrompt = buildSystemPrompt({
     workspaceRoot,
     platform: process.platform,
     approvalPolicy,
     memory,
+    repoMap,
     selfEdit,
   });
+
+  // Verification closed-loop applies only when the agent can edit files.
+  const verify = opts.chatOnly
+    ? undefined
+    : await makeVerifier(workspaceRoot, { enabled: !opts.noVerify });
 
   const tools = opts.chatOnly ? chatTools() : defaultTools({ selfEdit });
   const agent = new Agent({
@@ -90,6 +101,7 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     systemPrompt,
     initialMessages: opts.resume?.messages,
     protectedPaths: selfEdit ? SELF_PROTECTED_PATHS : [],
+    verify,
   });
 
   const model = resolveModel(config, providerId);
@@ -159,6 +171,18 @@ export class TurnRenderer {
     this.atLineStart = true;
   };
 
+  onVerifyStart = (): void => {
+    this.ensureNewline();
+    process.stdout.write(theme.info("\u25b8 verifying changes...") + "\n");
+    this.streamedThisTurn = false;
+  };
+
+  onVerifyResult = (result: { ok: boolean; summary: string; skipped?: boolean }): void => {
+    const mark = result.ok ? theme.ok("\u2713 ") : theme.err("\u2717 ");
+    process.stdout.write("  " + mark + theme.dim(result.summary) + "\n");
+    this.atLineStart = true;
+  };
+
   finish(): void {
     this.ensureNewline();
   }
@@ -174,6 +198,8 @@ export function makeCallbacks(renderer: TurnRenderer) {
     onRequestApproval: promptApproval,
     onAskUser: promptAskUser,
     onPresentPlan: promptPlan,
+    onVerifyStart: renderer.onVerifyStart,
+    onVerifyResult: renderer.onVerifyResult,
   };
 }
 

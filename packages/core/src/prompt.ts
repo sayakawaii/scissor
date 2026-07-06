@@ -4,6 +4,8 @@ export interface PromptContext {
   approvalPolicy: "plan-gate" | "confirm-each" | "auto";
   /** Long-term memory (e.g. SCISSOR_MEMORY.md) injected into the prompt. */
   memory?: string;
+  /** Compact repository map injected so the agent starts with an overview. */
+  repoMap?: string;
   /** When true, scissor is operating on its own source (self-edit mode). */
   selfEdit?: boolean;
 }
@@ -32,6 +34,14 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     ? [``, `Long-term project memory (persisted across sessions):`, ctx.memory.trim()]
     : [];
 
+  const repoMapBlock = ctx.repoMap?.trim()
+    ? [
+        ``,
+        `Repository map (overview; may be stale after edits — use retrieve/read_file for detail):`,
+        ctx.repoMap.trim(),
+      ]
+    : [];
+
   return [
     `You are scissor, a personal AI coding agent that runs in the terminal. You help the user accomplish software engineering and general tasks by reasoning and using tools.`,
     ``,
@@ -41,6 +51,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     ``,
     `Available tools:`,
     `- read_file: read a file's contents.`,
+    `- retrieve: ranked keyword search to locate relevant files for a query (try this first).`,
     `- glob: find files by pattern.`,
     `- grep: search file contents by regex.`,
     `- write_file: create or overwrite a file.`,
@@ -61,6 +72,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     ``,
     `When you have fully addressed the request, stop calling tools and give a concise final summary of what you did.`,
     ...selfEditGuidance,
+    ...repoMapBlock,
     ...memoryBlock,
   ].join("\n");
 }

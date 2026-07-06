@@ -23,6 +23,8 @@ export interface ChatOptions {
   chatOnly?: boolean;
   /** Resume a saved session by id or file path. */
   resume?: string;
+  /** Disable the automated verification closed-loop. */
+  noVerify?: boolean;
 }
 
 async function resolveResume(resume?: string): Promise<SessionData | undefined> {

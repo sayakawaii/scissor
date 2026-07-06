@@ -109,6 +109,22 @@ export interface ChatResult {
   finishReason?: string;
 }
 
+/** Outcome of running automated project verification (lint/type-check/tests). */
+export interface VerificationResult {
+  ok: boolean;
+  /** One-line summary, e.g. "typecheck failed" or "2 checks passed". */
+  summary: string;
+  /** Detailed output (trimmed) fed back to the model on failure. */
+  output?: string;
+  /** True when there was nothing to verify (no commands detected). */
+  skipped?: boolean;
+}
+
+/** Runs project verification. Provided by the UI/host, kept out of core. */
+export type VerifyFn = (info: {
+  editedFiles: string[];
+}) => Promise<VerificationResult>;
+
 /** A large-language-model provider (deepseek, claude, gpt, glm...). */
 export interface LLMProvider {
   readonly id: ProviderId;

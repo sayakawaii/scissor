@@ -32,6 +32,30 @@ export interface ExecResult {
   stderr: string;
 }
 
+/** Run a raw command line through the shell (caller controls quoting). */
+export function execShell(
+  line: string,
+  cwd: string,
+  timeoutMs = 300_000,
+): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    const child = spawn(line, { cwd, env: process.env, shell: true, windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (b) => (stdout += b.toString()));
+    child.stderr?.on("data", (b) => (stderr += b.toString()));
+    const timer = setTimeout(() => child.kill(), timeoutMs);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      resolve({ ok: false, code: null, stdout, stderr: stderr + String(err) });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ ok: code === 0, code, stdout, stderr });
+    });
+  });
+}
+
 /**
  * Quote a single argument for a shell command line. Only wraps when needed;
  * our args never contain embedded quotes, but we escape defensively.

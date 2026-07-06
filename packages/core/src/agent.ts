@@ -9,6 +9,8 @@ import type {
   ToolPreview,
   ToolResult,
   Usage,
+  VerificationResult,
+  VerifyFn,
 } from "./types.js";
 
 export type ApprovalPolicy = "plan-gate" | "confirm-each" | "auto";
@@ -36,6 +38,10 @@ export interface AgentCallbacks {
   /** Handle the present_plan control tool. */
   onPresentPlan?(summary: string, steps: string[]): Promise<PlanDecision>;
   onUsage?(usage: Usage): void;
+  /** Automated verification is about to run after edits. */
+  onVerifyStart?(): void;
+  /** Automated verification finished. */
+  onVerifyResult?(result: VerificationResult): void;
 }
 
 export interface AgentOptions {
@@ -55,6 +61,14 @@ export interface AgentOptions {
   initialMessages?: Message[];
   /** Workspace-relative globs that mutating tools must refuse to modify. */
   protectedPaths?: string[];
+  /**
+   * Optional project verifier. When set, after the model finishes a request in
+   * which it edited files, this runs; failures are fed back so the model can
+   * self-correct (closed loop), bounded by maxVerifyAttempts.
+   */
+  verify?: VerifyFn;
+  /** Max automated verification runs per request (default 2). */
+  maxVerifyAttempts?: number;
 }
 
 export interface RunResult {
@@ -79,6 +93,8 @@ export class Agent {
   private maxContextChars: number;
   private messages: Message[];
   private protectedPaths: string[];
+  private verify?: VerifyFn;
+  private maxVerifyAttempts: number;
   /** Set when restart_self is invoked during a run. */
   private pendingRestart?: { reason: string };
   /** Tools the user chose to "always" approve during this session. */
@@ -93,6 +109,8 @@ export class Agent {
     this.maxTurns = opts.maxTurns ?? 25;
     this.maxContextChars = opts.maxContextChars ?? 200_000;
     this.protectedPaths = opts.protectedPaths ?? [];
+    this.verify = opts.verify;
+    this.maxVerifyAttempts = opts.maxVerifyAttempts ?? 2;
     const system =
       opts.systemPrompt ??
       buildSystemPrompt({
@@ -138,6 +156,9 @@ export class Agent {
     let finalText = "";
     let turn = 0;
     this.pendingRestart = undefined;
+    const editedFiles = new Set<string>();
+    let editsSinceVerify = false;
+    let verifyAttempts = 0;
 
     while (turn < this.maxTurns) {
       if (signal?.aborted) return { finalText, turns: turn, aborted: true };
@@ -166,6 +187,35 @@ export class Agent {
       });
 
       if (result.toolCalls.length === 0) {
+        // The model believes it is done. Run automated verification if edits
+        // were made, and feed failures back so it can self-correct.
+        if (
+          this.verify &&
+          editsSinceVerify &&
+          verifyAttempts < this.maxVerifyAttempts &&
+          !signal?.aborted
+        ) {
+          verifyAttempts += 1;
+          editsSinceVerify = false;
+          callbacks.onVerifyStart?.();
+          let report: VerificationResult;
+          try {
+            report = await this.verify({ editedFiles: [...editedFiles] });
+          } catch (err) {
+            report = { ok: true, summary: `verification skipped: ${(err as Error).message}`, skipped: true };
+          }
+          callbacks.onVerifyResult?.(report);
+          if (!report.ok && !report.skipped) {
+            this.messages.push({
+              role: "user",
+              content:
+                `[automated verification] ${report.summary}\n` +
+                (report.output ? `${report.output}\n` : "") +
+                `Fix the issues above, then finish. This check will run again.`,
+            });
+            continue;
+          }
+        }
         return { finalText: result.text, turns: turn, aborted: false };
       }
 
@@ -173,6 +223,14 @@ export class Agent {
       for (const call of result.toolCalls) {
         if (signal?.aborted) return { finalText, turns: turn, aborted: true };
         const toolResult = await this.handleToolCall(call, ctx, callbacks, signal);
+        if (
+          !toolResult.isError &&
+          (call.name === "write_file" || call.name === "edit_file")
+        ) {
+          editsSinceVerify = true;
+          const p = call.arguments.path;
+          if (typeof p === "string") editedFiles.add(p);
+        }
         this.messages.push({
           role: "tool",
           content: toolResult.content,

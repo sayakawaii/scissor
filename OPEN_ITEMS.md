@@ -9,12 +9,15 @@ the current core) from products like Cursor / Claude Code. Not yet implemented.
 Right now the model only sees files it explicitly `grep`/`read`s. A real agent
 needs to proactively surface the right context.
 
-- Build a workspace index: file tree + symbol map ("repo map").
-- Optional embedding index for semantic retrieval; rank chunks by relevance to
-  the current task and inject the top-K into context automatically.
-- Respect `.gitignore`; incremental re-index on file changes.
-- Cheap first version: heuristic retrieval (filename/path/keyword scoring) before
-  investing in embeddings.
+- [x] Build a workspace index: file tree + symbol map ("repo map"), injected
+  into the system prompt. (`packages/core/src/repo-index.ts` `buildRepoMap`)
+- [x] Cheap first version: heuristic retrieval (filename/path/keyword scoring)
+  exposed as the `retrieve` tool. (`retrieve` in `repo-index.ts` + `tools/retrieve.ts`)
+- [x] Respect `.gitignore`.
+- [ ] Optional embedding index for semantic retrieval; rank chunks by relevance
+  and inject the top-K into context automatically.
+- [ ] Incremental re-index on file changes (the repo map is currently built once
+  per session and can go stale after edits).
 
 ## 2. Edit reliability ("apply")
 
@@ -31,10 +34,15 @@ context slightly wrong and the edit fails.
 Make correctness a first-class part of the loop, not something the model may or
 may not do.
 
-- After edits, automatically run project lint/tests/typecheck and feed failures
-  back to the model to self-correct (bounded retries).
-- Detect the project's toolchain (package.json scripts, pytest, cargo, etc.).
-- Surface a concise diff + test summary at the end of a task.
+- [x] After edits, automatically run project checks and feed failures back to the
+  model to self-correct (bounded by `maxVerifyAttempts`). (`Agent.run` verify loop
+  in `packages/core/src/agent.ts`)
+- [x] Detect the project's toolchain (package.json `typecheck`/`lint` scripts),
+  with `SCISSOR_VERIFY_COMMANDS` override and `--no-verify` / `SCISSOR_NO_VERIFY`
+  to disable. (`packages/cli/src/verify-project.ts`)
+- [ ] Broaden toolchain detection beyond Node (pytest, cargo, go test, etc.).
+- [ ] Run tests (not just typecheck/lint) when they are fast/safe.
+- [ ] Surface a concise diff + test summary at the end of a task.
 
 ## 4. Context compaction / long-horizon memory
 
