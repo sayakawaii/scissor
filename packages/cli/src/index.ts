@@ -13,6 +13,7 @@ import {
   type ChatOptions,
 } from "./commands/chat.js";
 import { runConfigWizard } from "./commands/config.js";
+import { runEvalCommand } from "./commands/eval.js";
 import { createSession, persistSession } from "./session.js";
 import { getScissorRepoRoot } from "./self/repo.js";
 import { runSupervisor } from "./self/supervisor.js";
@@ -109,6 +110,20 @@ program
       }
     }
     process.exit(0);
+  });
+
+program
+  .command("eval")
+  .description("run the eval suite (repeatable tasks scored automatically)")
+  .option("-p, --provider <ids>", 'comma-separated providers, or "all" for every configured one')
+  .option("-t, --task <ids>", "comma-separated task ids to run (default: all)")
+  .option("--json <path>", "write results JSON to a file")
+  .option("--keep", "keep temp workspaces for inspection")
+  .option("--strict", "exit non-zero if any task fails")
+  .option("--list", "list available tasks and exit")
+  .action(async (opts) => {
+    const code = await runEvalCommand(opts);
+    process.exit(code);
   });
 
 program

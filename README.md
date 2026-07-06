@@ -131,6 +131,24 @@ How it works:
 
 See [OPEN_ITEMS.md](OPEN_ITEMS.md) for the roadmap of larger improvements.
 
+## Eval harness
+
+A small suite of repeatable tasks (create a file, edit JSON, write & run a
+script, rename a function, find a value in the code, fix a syntax error) runs the
+agent in isolated temp workspaces and scores each result automatically — so you
+can measure whether a prompt/tool change actually helps instead of guessing.
+
+```bash
+scissor eval                       # run all tasks on the default provider
+scissor eval --list                # list tasks
+scissor eval -t edit-json,fix-bug  # run specific tasks
+scissor eval -p all --json evals/run.json   # every configured provider, save results
+# or during dev:
+npm run eval
+```
+
+Each task reports pass/fail with turns and timing, plus a per-provider pass rate.
+
 ## Safety model
 
 By default scissor uses a **plan-gate** flow: for non-trivial work it presents a numbered plan, waits for your approval, then executes the steps. Genuinely destructive commands are always confirmed. File operations are constrained to the current working directory.
@@ -148,6 +166,7 @@ npm run smoke:restart # real-LLM restart_self smoke
 npm run smoke:verify  # real-LLM verification closed-loop smoke
 npm run smoke:edit    # real-LLM CRLF edit smoke
 npm run smoke:compact # real-LLM context-compaction smoke
+npm run eval          # real-LLM eval suite (scored, per-provider)
 ```
 
 ## License

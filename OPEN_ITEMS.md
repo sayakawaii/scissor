@@ -81,9 +81,15 @@ Current trimming just drops old rounds. Better:
 
 ## 7. Eval harness
 
-- A small suite of repeatable tasks (create/edit/run) scored automatically, so
-  prompt/tool changes can be measured instead of guessed.
-- Track pass rate per provider to guide tuning.
+- [x] A small suite of repeatable tasks (create/edit/run/refactor/retrieve/fix)
+  scored automatically in isolated temp workspaces, so prompt/tool changes can be
+  measured instead of guessed. Run with `scissor eval` / `npm run eval`.
+  (`packages/cli/src/eval/**`, tasks in `eval/tasks.ts`)
+- [x] Per-provider runs (`--provider all`) and JSON output (`--json`) to track
+  pass rate over time.
+- [ ] More tasks (larger multi-file refactors, failing-test fixes, ambiguous
+  requests) and difficulty tiers.
+- [ ] CI integration / historical trend tracking of pass rate.
 
 ## 8. UX polish
 

@@ -11,6 +11,9 @@ dist/
 config.json
 *.local.json
 
+# eval run artifacts (machine-specific timings)
+evals/
+
 # logs
 *.log
 npm-debug.log*

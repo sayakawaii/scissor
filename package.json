@@ -16,13 +16,14 @@
     "dev": "node --import tsx packages/cli/src/index.ts",
     "scissor": "node --import tsx packages/cli/src/index.ts",
     "typecheck": "tsc --noEmit -p packages/core && tsc --noEmit -p packages/cli",
-    "test": "node --import tsx scripts/test-session.mts && node --import tsx scripts/test-selfupdate.mts && node --import tsx scripts/test-retrieve.mts && node --import tsx scripts/test-verify-loop.mts && node --import tsx scripts/test-edit-engine.mts && node --import tsx scripts/test-compaction.mts && node --import tsx scripts/test-remember.mts",
+    "test": "node --import tsx scripts/test-session.mts && node --import tsx scripts/test-selfupdate.mts && node --import tsx scripts/test-retrieve.mts && node --import tsx scripts/test-verify-loop.mts && node --import tsx scripts/test-edit-engine.mts && node --import tsx scripts/test-compaction.mts && node --import tsx scripts/test-remember.mts && node --import tsx scripts/test-eval.mts",
     "smoke": "node --import tsx scripts/smoke.mts",
     "smoke:plan": "node --import tsx scripts/smoke-plan.mts",
     "smoke:restart": "node --import tsx scripts/smoke-restart.mts",
     "smoke:verify": "node --import tsx scripts/smoke-verify.mts",
     "smoke:edit": "node --import tsx scripts/smoke-edit.mts",
     "smoke:compact": "node --import tsx scripts/smoke-compact.mts",
+    "eval": "node --import tsx scripts/eval.mts",
     "clean": "rimraf packages/*/dist"
   },
   "devDependencies": {
