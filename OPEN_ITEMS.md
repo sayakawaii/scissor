@@ -21,13 +21,19 @@ needs to proactively surface the right context.
 
 ## 2. Edit reliability ("apply")
 
-`edit_file` requires an exact unique `old_string`; models often get whitespace or
-context slightly wrong and the edit fails.
+`edit_file` used to require an exact unique `old_string`; models often got
+whitespace or line endings slightly wrong and the edit failed.
 
-- Fuzzy/robust matching (ignore trailing whitespace, tolerate minor drift).
-- A dedicated "apply" step: given a rough edit, reconcile it against the real file.
-- Multi-hunk edits in one call; line-range-based edits as an alternative.
-- Auto-retry with feedback when an edit fails to match.
+- [x] Fuzzy/robust matching: tolerates line-ending (CRLF/LF) and trailing-
+  whitespace differences, plus stray leading/trailing blank lines, while only
+  applying a fuzzy match when it is unique. (`packages/core/src/edit-engine.ts`)
+- [x] Multi-hunk edits in one call via an `edits` array, applied atomically.
+- [x] `replace_all` to replace every occurrence.
+- [x] Near-miss hint on failure ("a line matching X exists at line N …") so the
+  model's next attempt is cheaper. The tool error is fed back automatically.
+- [ ] A dedicated LLM "apply" step: given a rough edit, reconcile it against the
+  real file (for larger/structural edits).
+- [ ] Line-range-based edits as an alternative addressing scheme.
 
 ## 3. Verification closed-loop
 

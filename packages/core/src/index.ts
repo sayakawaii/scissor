@@ -4,6 +4,7 @@ export * from "./prompt.js";
 export * from "./agent.js";
 export * from "./session-store.js";
 export * from "./repo-index.js";
+export * from "./edit-engine.js";
 export * from "./tools/index.js";
 export {
   createProvider,

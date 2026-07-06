@@ -79,6 +79,18 @@ from `package.json` scripts (`typecheck`/`type-check`/`tsc`, then `lint`).
 - Override the commands with `SCISSOR_VERIFY_COMMANDS="cmd1;cmd2"`.
 - Disable per-run with `--no-verify`, or globally with `SCISSOR_NO_VERIFY=1`.
 
+## Reliable edits
+
+`edit_file` uses a tolerant matching engine so small mismatches don't waste a
+turn:
+
+- Line-ending (CRLF/LF) and trailing-whitespace differences are tolerated, as
+  are stray leading/trailing blank lines — but a fuzzy match is only applied when
+  it is unique, and unchanged lines keep their exact original formatting.
+- `replace_all` replaces every occurrence; otherwise a match must be unique.
+- Pass an `edits` array to make several changes to one file atomically.
+- On a miss, the error points at the closest matching line so the retry is cheap.
+
 ## Sessions & memory
 
 Every REPL/one-shot run is saved to `~/.scissor/sessions/<id>.json` (transcript +
@@ -119,11 +131,12 @@ By default scissor uses a **plan-gate** flow: for non-trivial work it presents a
 npm install
 npm run typecheck     # non-emitting type check
 npm run build         # tsup build (also used by the self-update verification gate)
-npm test              # deterministic tests (session, supervisor, retrieval, verify loop)
+npm test              # deterministic tests (session, supervisor, retrieval, verify, edits)
 npm run smoke         # real-LLM tool-loop smoke (needs a provider key)
 npm run smoke:plan    # real-LLM plan-gate smoke
 npm run smoke:restart # real-LLM restart_self smoke
 npm run smoke:verify  # real-LLM verification closed-loop smoke
+npm run smoke:edit    # real-LLM CRLF edit smoke
 ```
 
 ## License
