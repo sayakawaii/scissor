@@ -1,0 +1,22 @@
+{
+  "name": "@scissor/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "scissor": "./dist/index.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "start": "node --import tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^7.2.1",
+    "@scissor/core": "*",
+    "chalk": "^5.4.1",
+    "commander": "^12.1.0",
+    "ora": "^8.1.1"
+  }
+}
