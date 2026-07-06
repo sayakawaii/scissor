@@ -59,9 +59,51 @@ Options:
 
 REPL slash commands: `/help`, `/reset`, `/info`, `/exit`.
 
+## Sessions & memory
+
+Every REPL/one-shot run is saved to `~/.scissor/sessions/<id>.json` (transcript +
+metadata). List them with `scissor sessions` and continue one with
+`scissor --resume <id>`. A `SCISSOR_MEMORY.md` file in the workspace, if present,
+is injected into the system prompt as long-term memory.
+
+## Self-iteration (experimental)
+
+scissor can modify and reload its **own** source code under a supervisor that
+keeps it safe:
+
+```bash
+scissor supervise "make your grep tool case-insensitive by default"
+```
+
+How it works:
+
+- A stable **supervisor** process spawns the agent as a child.
+- The agent edits scissor's source, then calls the `restart_self` tool.
+- The supervisor **checkpoints** the change (git commit), **verifies** the new
+  build (type-check + build), and either reloads into it or **rolls back** to the
+  last working version automatically.
+- The session (memory) is persisted across restarts, so the conversation
+  continues seamlessly into the new version.
+- The safety machinery (`packages/cli/src/self/**`, `scripts/**`) is protected and
+  cannot be modified by the agent.
+
+See [OPEN_ITEMS.md](OPEN_ITEMS.md) for the roadmap of larger improvements.
+
 ## Safety model
 
 By default scissor uses a **plan-gate** flow: for non-trivial work it presents a numbered plan, waits for your approval, then executes the steps. Genuinely destructive commands are always confirmed. File operations are constrained to the current working directory.
+
+## Development
+
+```bash
+npm install
+npm run typecheck     # non-emitting type check
+npm run build         # tsup build (also used by the self-update verification gate)
+npm test              # deterministic tests (session round-trip, supervisor protocol)
+npm run smoke         # real-LLM tool-loop smoke (needs a provider key)
+npm run smoke:plan    # real-LLM plan-gate smoke
+npm run smoke:restart # real-LLM restart_self smoke
+```
 
 ## License
 

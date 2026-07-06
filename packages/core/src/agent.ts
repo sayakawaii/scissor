@@ -51,12 +51,18 @@ export interface AgentOptions {
   maxContextChars?: number;
   /** Provide a custom system prompt; otherwise a default is built. */
   systemPrompt?: string;
+  /** Prior transcript (excluding system) to resume from. */
+  initialMessages?: Message[];
+  /** Workspace-relative globs that mutating tools must refuse to modify. */
+  protectedPaths?: string[];
 }
 
 export interface RunResult {
   finalText: string;
   turns: number;
   aborted: boolean;
+  /** Set when the model called restart_self; the caller should reload. */
+  restartRequested?: { reason: string };
 }
 
 /**
@@ -72,6 +78,9 @@ export class Agent {
   private maxTurns: number;
   private maxContextChars: number;
   private messages: Message[];
+  private protectedPaths: string[];
+  /** Set when restart_self is invoked during a run. */
+  private pendingRestart?: { reason: string };
   /** Tools the user chose to "always" approve during this session. */
   private alwaysApproved = new Set<string>();
 
@@ -83,6 +92,7 @@ export class Agent {
     this.approvalPolicy = opts.approvalPolicy ?? "plan-gate";
     this.maxTurns = opts.maxTurns ?? 25;
     this.maxContextChars = opts.maxContextChars ?? 200_000;
+    this.protectedPaths = opts.protectedPaths ?? [];
     const system =
       opts.systemPrompt ??
       buildSystemPrompt({
@@ -91,11 +101,19 @@ export class Agent {
         approvalPolicy: this.approvalPolicy,
       });
     this.messages = [{ role: "system", content: system }];
+    if (opts.initialMessages?.length) {
+      this.messages.push(...opts.initialMessages.filter((m) => m.role !== "system"));
+    }
   }
 
   /** Full conversation history (including the system prompt). */
   getMessages(): readonly Message[] {
     return this.messages;
+  }
+
+  /** Conversation transcript excluding the system prompt (for persistence). */
+  getTranscript(): Message[] {
+    return this.messages.filter((m) => m.role !== "system");
   }
 
   /** Reset conversation, keeping the system prompt. */
@@ -112,9 +130,14 @@ export class Agent {
   ): Promise<RunResult> {
     this.messages.push({ role: "user", content: userInput });
 
-    const ctx: ToolContext = { workspaceRoot: this.workspaceRoot, signal };
+    const ctx: ToolContext = {
+      workspaceRoot: this.workspaceRoot,
+      signal,
+      protectedPaths: this.protectedPaths,
+    };
     let finalText = "";
     let turn = 0;
+    this.pendingRestart = undefined;
 
     while (turn < this.maxTurns) {
       if (signal?.aborted) return { finalText, turns: turn, aborted: true };
@@ -156,6 +179,18 @@ export class Agent {
           toolCallId: call.id,
           name: call.name,
         });
+      }
+
+      // A restart was requested; hand control back so the supervisor can
+      // verify + reload. The transcript already contains a tool result so it
+      // stays valid when resumed.
+      if (this.pendingRestart) {
+        return {
+          finalText,
+          turns: turn,
+          aborted: false,
+          restartRequested: this.pendingRestart,
+        };
       }
     }
 
@@ -200,6 +235,18 @@ export class Agent {
       }
       return {
         content: "User rejected the plan. Stop and ask how they would like to proceed.",
+      };
+    }
+
+    if (call.name === "restart_self") {
+      const reason = String(call.arguments.reason ?? "self-update");
+      this.pendingRestart = { reason };
+      return {
+        content:
+          "Restart requested. The supervisor will now verify the new build; " +
+          "if it passes, scissor reloads into the new version and this " +
+          "conversation continues. If verification fails, the changes are " +
+          "rolled back. Assume success and continue the task after restart.",
       };
     }
 

@@ -1,5 +1,5 @@
 import type { Tool } from "../types.js";
-import { askUserTool, presentPlanTool } from "./control.js";
+import { askUserTool, presentPlanTool, restartSelfTool } from "./control.js";
 import { readFileTool } from "./read-file.js";
 import { globTool, grepTool } from "./search.js";
 import { runShellTool } from "./shell.js";
@@ -9,12 +9,22 @@ export { readFileTool } from "./read-file.js";
 export { globTool, grepTool } from "./search.js";
 export { runShellTool } from "./shell.js";
 export { editFileTool, writeFileTool } from "./write-file.js";
-export { askUserTool, presentPlanTool, CONTROL_TOOL_NAMES } from "./control.js";
-export { resolveInWorkspace, displayPath } from "./paths.js";
+export {
+  askUserTool,
+  presentPlanTool,
+  restartSelfTool,
+  CONTROL_TOOL_NAMES,
+} from "./control.js";
+export { resolveInWorkspace, displayPath, isProtected } from "./paths.js";
+
+export interface ToolSetOptions {
+  /** Include the restart_self tool (only when running under the supervisor). */
+  selfEdit?: boolean;
+}
 
 /** The default tool set exposed to the agent (coding capabilities). */
-export function defaultTools(): Tool[] {
-  return [
+export function defaultTools(opts: ToolSetOptions = {}): Tool[] {
+  const tools: Tool[] = [
     readFileTool,
     globTool,
     grepTool,
@@ -24,6 +34,8 @@ export function defaultTools(): Tool[] {
     askUserTool,
     presentPlanTool,
   ];
+  if (opts.selfEdit) tools.push(restartSelfTool);
+  return tools;
 }
 
 /** Chat-only tool set: no file mutation or command execution. */

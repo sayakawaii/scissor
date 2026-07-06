@@ -5,7 +5,7 @@ import type { Tool } from "../types.js";
  * rather than executed directly. Their run() is a safety fallback only.
  */
 
-export const CONTROL_TOOL_NAMES = ["ask_user", "present_plan"] as const;
+export const CONTROL_TOOL_NAMES = ["ask_user", "present_plan", "restart_self"] as const;
 
 export const askUserTool: Tool = {
   name: "ask_user",
@@ -26,6 +26,29 @@ export const askUserTool: Tool = {
   async run() {
     return {
       content: "ask_user was not intercepted by the UI layer.",
+      isError: true,
+    };
+  },
+};
+
+export const restartSelfTool: Tool = {
+  name: "restart_self",
+  description:
+    "Only available when running under the scissor supervisor. Call this after you have modified scissor's OWN source code and want the changes to take effect. The supervisor will verify the new build (type-check + build); if it passes, scissor restarts into the new version and this same conversation continues. If it fails, your changes are rolled back automatically. Do not call this for changes to an unrelated user project.",
+  parameters: {
+    type: "object",
+    properties: {
+      reason: {
+        type: "string",
+        description: "Short description of what you changed and why you are restarting.",
+      },
+    },
+    required: ["reason"],
+  },
+  async run() {
+    return {
+      content:
+        "restart_self is only available under the scissor supervisor (run `scissor supervise`).",
       isError: true,
     };
   },

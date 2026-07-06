@@ -47,6 +47,11 @@ export interface ToolContext {
   /** Absolute path of the workspace root; file ops are constrained here. */
   workspaceRoot: string;
   signal?: AbortSignal;
+  /**
+   * Workspace-relative glob patterns that mutating tools must refuse to touch.
+   * Used in self-edit mode to protect the safety machinery (supervisor, etc.).
+   */
+  protectedPaths?: string[];
 }
 
 /** A tool the agent can call. */

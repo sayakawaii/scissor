@@ -2,6 +2,10 @@ export interface PromptContext {
   workspaceRoot: string;
   platform: string;
   approvalPolicy: "plan-gate" | "confirm-each" | "auto";
+  /** Long-term memory (e.g. SCISSOR_MEMORY.md) injected into the prompt. */
+  memory?: string;
+  /** When true, scissor is operating on its own source (self-edit mode). */
+  selfEdit?: boolean;
 }
 
 /** Build the system prompt that governs scissor's agent behavior. */
@@ -12,6 +16,21 @@ export function buildSystemPrompt(ctx: PromptContext): string {
       : ctx.approvalPolicy === "confirm-each"
         ? `Each file modification or command will be confirmed by the user before it runs. You may still use present_plan for complex work to align on approach.`
         : `You may execute steps directly. Use present_plan only when the user would benefit from reviewing the approach first.`;
+
+  const selfEditGuidance = ctx.selfEdit
+    ? [
+        ``,
+        `SELF-EDIT MODE: the workspace above is scissor's OWN source code and you are running under the supervisor.`,
+        `- After you modify scissor's source and want the changes to take effect, call restart_self with a short reason.`,
+        `- The supervisor verifies the new build (type-check + build) before switching. If it fails, your changes are rolled back automatically, so make focused, coherent changes.`,
+        `- Some paths are protected and cannot be modified (the supervisor and safety machinery); respect the errors if you hit them.`,
+        `- Prefer small, verifiable increments. After restarting, confirm the change took effect.`,
+      ]
+    : [];
+
+  const memoryBlock = ctx.memory?.trim()
+    ? [``, `Long-term project memory (persisted across sessions):`, ctx.memory.trim()]
+    : [];
 
   return [
     `You are scissor, a personal AI coding agent that runs in the terminal. You help the user accomplish software engineering and general tasks by reasoning and using tools.`,
@@ -41,5 +60,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     `- Use paths relative to the workspace root.`,
     ``,
     `When you have fully addressed the request, stop calling tools and give a concise final summary of what you did.`,
+    ...selfEditGuidance,
+    ...memoryBlock,
   ].join("\n");
 }

@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createTwoFilesPatch } from "diff";
 import type { Tool } from "../types.js";
-import { displayPath, resolveInWorkspace } from "./paths.js";
+import { displayPath, isProtected, resolveInWorkspace } from "./paths.js";
 
 async function readIfExists(abs: string): Promise<string | null> {
   try {
@@ -58,6 +58,12 @@ export const writeFileTool: Tool = {
       abs = resolveInWorkspace(ctx.workspaceRoot, target);
     } catch (err) {
       return { content: `Error: ${(err as Error).message}`, isError: true };
+    }
+    if (isProtected(ctx.workspaceRoot, abs, ctx.protectedPaths)) {
+      return {
+        content: `Error: "${target}" is a protected path and cannot be modified.`,
+        isError: true,
+      };
     }
     try {
       await fs.mkdir(path.dirname(abs), { recursive: true });
@@ -128,6 +134,12 @@ export const editFileTool: Tool = {
       abs = resolveInWorkspace(ctx.workspaceRoot, target);
     } catch (err) {
       return { content: `Error: ${(err as Error).message}`, isError: true };
+    }
+    if (isProtected(ctx.workspaceRoot, abs, ctx.protectedPaths)) {
+      return {
+        content: `Error: "${target}" is a protected path and cannot be modified.`,
+        isError: true,
+      };
     }
     try {
       const before = await readIfExists(abs);
