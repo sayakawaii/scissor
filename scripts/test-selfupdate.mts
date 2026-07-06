@@ -144,5 +144,53 @@ const noop = () => {};
   process.stdout.write("\x1b[32mscenario 2 (rollback): PASS\x1b[0m\n");
 }
 
+// --- Scenario 3: eval-step failure also rolls back and notes the eval step ---
+{
+  const repo = await makeRepo();
+  const baseline = git(repo, "rev-parse", "HEAD");
+  const sessionPath = await makeSession(repo);
+  const evalFailVerify = async () => ({
+    ok: false as const,
+    step: "eval",
+    detail: "1/6 passed (17%) — fix-bug failed",
+  });
+
+  const runChild = async ({ generation }: { generation: number }) => {
+    if (generation === 0) {
+      await fs.writeFile(path.join(repo, "regress.txt"), "capability regression\n");
+      return 75;
+    }
+    return 0;
+  };
+
+  const code = await runSupervisor({
+    repo,
+    sessionPath,
+    runChild,
+    verify: evalFailVerify,
+    log: noop,
+  });
+
+  assert.equal(code, 0, "supervisor recovers from eval failure");
+  assert.equal(git(repo, "rev-parse", "HEAD"), baseline, "rolled back after eval failure");
+  const session = await loadSession(sessionPath);
+  assert.ok(
+    session.messages.some((m) => m.content.includes('"eval"')),
+    "failure note names the eval step",
+  );
+  await fs.rm(repo, { recursive: true, force: true }).catch(() => {});
+  process.stdout.write("\x1b[32mscenario 3 (eval rollback): PASS\x1b[0m\n");
+}
+
+// --- verifyEval honors SCISSOR_SKIP_EVAL (no network / build) ---
+{
+  const { verifyEval } = await import("../packages/cli/src/self/verify.js");
+  process.env.SCISSOR_SKIP_EVAL = "1";
+  const r = await verifyEval(os.tmpdir());
+  assert.ok(r.ok && r.step === "eval" && /skipped/.test(r.detail), "verifyEval respects SCISSOR_SKIP_EVAL");
+  delete process.env.SCISSOR_SKIP_EVAL;
+  process.stdout.write("\x1b[32mscenario 4 (eval skip env): PASS\x1b[0m\n");
+}
+
 await fs.rm(cfgDir, { recursive: true, force: true }).catch(() => {});
 process.stdout.write("\x1b[32mtest-selfupdate: ALL PASS\x1b[0m\n");

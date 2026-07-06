@@ -122,8 +122,10 @@ How it works:
 - A stable **supervisor** process spawns the agent as a child.
 - The agent edits scissor's source, then calls the `restart_self` tool.
 - The supervisor **checkpoints** the change (git commit), **verifies** the new
-  build (type-check + build), and either reloads into it or **rolls back** to the
-  last working version automatically.
+  version (type-check + build + the **eval suite**, so a self-edit that breaks the
+  agent's actual behavior is caught), and either reloads into it or **rolls back**
+  to the last working version automatically. Set `SCISSOR_SKIP_EVAL=1` to gate on
+  build only, or `SCISSOR_SELFUPDATE_EVAL_TASKS=id1,id2` to run a subset.
 - The session (memory) is persisted across restarts, so the conversation
   continues seamlessly into the new version.
 - The safety machinery (`packages/cli/src/self/**`, `scripts/**`) is protected and

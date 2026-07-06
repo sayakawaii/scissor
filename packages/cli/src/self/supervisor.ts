@@ -3,7 +3,7 @@ import { loadSession, saveSession, type Message } from "@scissor/core";
 import { theme } from "../ui/render.js";
 import { createCheckpoint, getHead, rollbackTo } from "./checkpoint.js";
 import { RESTART_EXIT_CODE } from "./repo.js";
-import { verifyBuild, type VerifyResult } from "./verify.js";
+import { verifyBuild, verifySelfUpdate, type VerifyResult } from "./verify.js";
 
 export interface ChildRunInfo {
   generation: number;
@@ -15,7 +15,7 @@ export interface SupervisorOptions {
   sessionPath: string;
   /** Injectable child runner (defaults to spawning a real agent process). */
   runChild?: (info: ChildRunInfo) => Promise<number>;
-  /** Injectable build verifier (defaults to type-check + build). */
+  /** Injectable verifier (defaults to type-check + build + eval suite). */
   verify?: (repo: string) => Promise<VerifyResult>;
   log?: (msg: string) => void;
   maxRestarts?: number;
@@ -32,7 +32,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<number> {
   const repo = opts.repo;
   const maxRestarts = opts.maxRestarts ?? 50;
   const runChild = opts.runChild ?? defaultRunChild(repo, log);
-  const verify = opts.verify ?? verifyBuild;
+  const verify = opts.verify ?? verifySelfUpdate;
 
   let lastGood = await getHead(repo);
   if (!lastGood) {
@@ -56,7 +56,11 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<number> {
     const cp = await createCheckpoint(repo, `scissor self-update (gen ${generation})`);
     if (!cp.ok) log(theme.warn(`[supervisor] checkpoint warning: ${cp.detail}`));
 
-    log(theme.info("[supervisor] verifying new build (type-check + build)..."));
+    log(
+      theme.info(
+        "[supervisor] verifying new version (type-check + build + eval suite; the eval step calls the model and may take ~1 min)...",
+      ),
+    );
     const v = await verify(repo);
 
     if (v.ok) {

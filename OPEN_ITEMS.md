@@ -100,7 +100,10 @@ Current trimming just drops old rounds. Better:
 
 ## 9. Self-iteration hardening (extends the shipped supervisor)
 
-- Run the smoke suite (not just type-check + build) inside the verification gate.
+- [x] Run the eval suite (not just type-check + build) inside the verification
+  gate, so self-edits that break behavior are rolled back. Skippable via
+  `SCISSOR_SKIP_EVAL=1`, subset via `SCISSOR_SELFUPDATE_EVAL_TASKS`.
+  (`verifySelfUpdate` in `packages/cli/src/self/verify.ts`)
 - Loop/oscillation detection: stop if the agent keeps failing the same self-edit.
 - Require explicit human approval for self-edits by default (plan-gate already
   helps; make it a hard gate for `restart_self`).
