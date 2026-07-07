@@ -18,7 +18,8 @@ export interface TaskResult {
 }
 
 export interface ProviderRun {
-  provider: ProviderId;
+  /** Target label: a provider id for scissor, or an agent name (e.g. "goose"). */
+  provider: string;
   model: string;
   results: TaskResult[];
   passed: number;
@@ -49,67 +50,95 @@ const defaultSessionFactory: EvalSessionFactory = async ({ workspaceRoot, provid
   return { agent: s.agent, providerId: s.providerId, model: s.model };
 };
 
-export interface RunEvalOptions {
-  providers?: ProviderId[];
-  taskIds?: string[];
-  keep?: boolean;
-  timeoutMs?: number;
-  onProgress?: (event: ProgressEvent) => void;
-  sessionFactory?: EvalSessionFactory;
+/** How the agent under test runs a single task inside a prepared workspace. */
+export interface AgentTarget {
+  label: string;
+  runTask(
+    task: EvalTask,
+    workspaceRoot: string,
+    timeoutMs: number,
+  ): Promise<{ finalText: string; turns: number; model?: string; ok: boolean; detail?: string }>;
+}
+
+/** A scissor (in-process) target for a given provider. */
+export function scissorTarget(
+  provider: ProviderId | undefined,
+  factory: EvalSessionFactory = defaultSessionFactory,
+): AgentTarget {
+  return {
+    label: provider ?? "default",
+    async runTask(task, workspaceRoot, timeoutMs) {
+      const session = await factory({ workspaceRoot, provider });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await session.agent.run(task.prompt, QUIET_CALLBACKS, controller.signal);
+        return {
+          finalText: res.finalText,
+          turns: res.turns,
+          model: session.model,
+          ok: !res.aborted,
+          detail: res.aborted ? "timed out" : undefined,
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
 }
 
 export type ProgressEvent =
-  | { type: "provider-start"; provider: ProviderId }
-  | { type: "task-start"; provider: ProviderId; task: EvalTask }
-  | { type: "task-end"; provider: ProviderId; result: TaskResult };
+  | { type: "provider-start"; provider: string }
+  | { type: "task-start"; provider: string; task: EvalTask }
+  | { type: "task-end"; provider: string; result: TaskResult };
 
 async function runOneTask(
   task: EvalTask,
-  provider: ProviderId | undefined,
-  factory: EvalSessionFactory,
+  target: AgentTarget,
   timeoutMs: number,
   keep: boolean,
-): Promise<{ result: Omit<TaskResult, "taskId" | "title" | "tags">; model: string }> {
+): Promise<{ result: TaskResult; model: string }> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "scissor-eval-"));
   const started = Date.now();
-  let turns = 0;
   let model = "";
+  const base = { taskId: task.id, title: task.title, tags: task.tags };
   try {
     if (task.setup) await task.setup(dir);
-    const session = await factory({ workspaceRoot: dir, provider });
-    model = session.model;
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    let finalText = "";
-    let timedOut = false;
-    try {
-      const res = await session.agent.run(task.prompt, QUIET_CALLBACKS, controller.signal);
-      finalText = res.finalText;
-      turns = res.turns;
-      timedOut = res.aborted;
-    } finally {
-      clearTimeout(timer);
-    }
-
-    if (timedOut) {
+    const run = await target.runTask(task, dir, timeoutMs);
+    model = run.model ?? "";
+    if (!run.ok) {
       return {
         model,
-        result: { pass: false, detail: "timed out", turns, elapsedMs: Date.now() - started, timedOut: true },
+        result: {
+          ...base,
+          pass: false,
+          detail: run.detail ?? "agent run failed",
+          turns: run.turns,
+          elapsedMs: Date.now() - started,
+          timedOut: run.detail === "timed out",
+        },
       };
     }
-    const check = await task.check(dir, finalText);
+    const check = await task.check(dir, run.finalText);
     return {
       model,
-      result: { pass: check.pass, detail: check.detail, turns, elapsedMs: Date.now() - started, timedOut: false },
+      result: {
+        ...base,
+        pass: check.pass,
+        detail: check.detail,
+        turns: run.turns,
+        elapsedMs: Date.now() - started,
+        timedOut: false,
+      },
     };
   } catch (err) {
     return {
       model,
       result: {
+        ...base,
         pass: false,
         detail: "threw",
-        turns,
+        turns: 0,
         elapsedMs: Date.now() - started,
         timedOut: false,
         error: (err as Error).message,
@@ -120,34 +149,38 @@ async function runOneTask(
   }
 }
 
-/** Run the eval suite for each provider and return per-provider results. */
-export async function runEval(opts: RunEvalOptions = {}): Promise<ProviderRun[]> {
-  const tasks = findTasks(opts.taskIds);
-  const factory = opts.sessionFactory ?? defaultSessionFactory;
-  const timeoutMs = opts.timeoutMs ?? 150_000;
-  const providers = opts.providers ?? [undefined as unknown as ProviderId];
-  const runs: ProviderRun[] = [];
+export interface RunSuiteOptions {
+  keep?: boolean;
+  timeoutMs?: number;
+  onProgress?: (event: ProgressEvent) => void;
+}
 
-  for (const provider of providers) {
-    opts.onProgress?.({ type: "provider-start", provider });
+/** Run a set of tasks against each target and return per-target results. */
+export async function runSuite(
+  tasks: EvalTask[],
+  targets: AgentTarget[],
+  opts: RunSuiteOptions = {},
+): Promise<ProviderRun[]> {
+  const timeoutMs = opts.timeoutMs ?? 150_000;
+  const runs: ProviderRun[] = [];
+  for (const target of targets) {
+    opts.onProgress?.({ type: "provider-start", provider: target.label });
     const results: TaskResult[] = [];
     let model = "";
     for (const task of tasks) {
-      opts.onProgress?.({ type: "task-start", provider, task });
+      opts.onProgress?.({ type: "task-start", provider: target.label, task });
       const { result, model: m } = await runOneTask(
         task,
-        provider,
-        factory,
+        target,
         task.timeoutMs ?? timeoutMs,
         opts.keep ?? false,
       );
       if (m) model = m;
-      const full: TaskResult = { taskId: task.id, title: task.title, tags: task.tags, ...result };
-      results.push(full);
-      opts.onProgress?.({ type: "task-end", provider, result: full });
+      results.push(result);
+      opts.onProgress?.({ type: "task-end", provider: target.label, result });
     }
     runs.push({
-      provider,
+      provider: target.label,
       model,
       results,
       passed: results.filter((r) => r.pass).length,
@@ -155,6 +188,28 @@ export async function runEval(opts: RunEvalOptions = {}): Promise<ProviderRun[]>
     });
   }
   return runs;
+}
+
+export interface RunEvalOptions {
+  providers?: ProviderId[];
+  taskIds?: string[];
+  keep?: boolean;
+  timeoutMs?: number;
+  onProgress?: (event: ProgressEvent) => void;
+  sessionFactory?: EvalSessionFactory;
+}
+
+/** Run the default eval suite with scissor for each provider. */
+export async function runEval(opts: RunEvalOptions = {}): Promise<ProviderRun[]> {
+  const tasks = findTasks(opts.taskIds);
+  const factory = opts.sessionFactory ?? defaultSessionFactory;
+  const providers = opts.providers ?? [undefined as unknown as ProviderId];
+  const targets = providers.map((p) => scissorTarget(p, factory));
+  return runSuite(tasks, targets, {
+    keep: opts.keep,
+    timeoutMs: opts.timeoutMs,
+    onProgress: opts.onProgress,
+  });
 }
 
 export { EVAL_TASKS };

@@ -151,6 +151,38 @@ npm run eval
 
 Each task reports pass/fail with turns and timing, plus a per-provider pass rate.
 
+## Benchmark & agent comparison
+
+`scissor bench` runs a harder, more differentiating suite (scaffold a CLI, debug
+a failing test, multi-file rename refactor, CSV data transform, dependency
+version lookup in a larger tree) and — importantly — is **agent-agnostic**: the
+exact same tasks and objective checks can score scissor *or any headless agent*,
+so a head-to-head is apples-to-apples.
+
+```bash
+scissor bench                         # scissor, default provider
+scissor bench --list                  # list benchmark tasks
+scissor bench -p all --json evals/bench.json
+npm run bench                         # dev shortcut
+```
+
+Compare against [goose](https://github.com/block/goose) (or any CLI agent):
+
+```bash
+# goose must be on PATH and have a provider configured (`goose configure`).
+scissor bench --agent goose
+
+# any other headless agent via a command template ({PROMPT} is substituted):
+scissor bench --agent custom --agent-cmd "mytool run --quiet -t {PROMPT}"
+```
+
+The external adapter runs the agent once per task inside the prepared workspace
+(`goose run --no-session --quiet -t <prompt>` with `GOOSE_MODE=auto`), then
+scores the resulting files / final answer with the same checks. External-agent
+runs are POSIX-oriented (mac/Linux/WSL); on native Windows, run goose under WSL.
+
+Latest scissor baseline (DeepSeek `deepseek-chat`): **5/5 (100%)**.
+
 ## Safety model
 
 By default scissor uses a **plan-gate** flow: for non-trivial work it presents a numbered plan, waits for your approval, then executes the steps. Genuinely destructive commands are always confirmed. File operations are constrained to the current working directory.
@@ -169,6 +201,7 @@ npm run smoke:verify  # real-LLM verification closed-loop smoke
 npm run smoke:edit    # real-LLM CRLF edit smoke
 npm run smoke:compact # real-LLM context-compaction smoke
 npm run eval          # real-LLM eval suite (scored, per-provider)
+npm run bench         # harder benchmark suite (scissor / goose / custom agent)
 npm run check         # the full gate: typecheck + build + test + eval --strict
 ```
 

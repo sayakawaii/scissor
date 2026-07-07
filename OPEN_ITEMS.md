@@ -87,9 +87,31 @@ Current trimming just drops old rounds. Better:
   (`packages/cli/src/eval/**`, tasks in `eval/tasks.ts`)
 - [x] Per-provider runs (`--provider all`) and JSON output (`--json`) to track
   pass rate over time.
-- [ ] More tasks (larger multi-file refactors, failing-test fixes, ambiguous
-  requests) and difficulty tiers.
+- [x] A harder, differentiating **benchmark** suite (`scissor bench` /
+  `npm run bench`): scaffold-a-CLI, debug-a-failing-test, multi-file rename,
+  CSV data transform, dependency-version lookup in a larger tree.
+  (`packages/cli/src/eval/bench-tasks.ts`)
+- [x] Agent-agnostic harness: `runSuite` + `AgentTarget` so the same tasks/checks
+  score scissor or any headless CLI agent; built-in **goose** adapter
+  (`--agent goose`) and a `--agent custom --agent-cmd "... {PROMPT}"` template.
+  (`packages/cli/src/eval/{runner,agents}.ts`)
+- [ ] More tasks (larger multi-file refactors, ambiguous requests) and difficulty
+  tiers.
 - [ ] CI integration / historical trend tracking of pass rate.
+
+## 7b. Capability gaps vs. goose (comparison backlog)
+
+goose is a mature, general-purpose agent; the biggest deltas to close:
+
+- [ ] MCP support (goose's core extensibility model) — scissor has a fixed
+  built-in toolset, no external tool servers.
+- [ ] Non-coding tool breadth: web scraping, PDF/DOCX reading, browser
+  automation (goose ComputerController).
+- [ ] Recipes / parameterized reusable workflows (`--recipe`, sub-recipes).
+- [ ] Desktop app + REST server surface (scissor is CLI-only by design).
+- [ ] Breadth of provider integrations (goose 15–30+; scissor has 4).
+- [ ] Run the head-to-head once goose is installed (adapter is ready:
+  `scissor bench --agent goose`).
 
 ## 8. UX polish
 

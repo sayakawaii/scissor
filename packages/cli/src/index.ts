@@ -127,6 +127,23 @@ program
   });
 
 program
+  .command("bench")
+  .description("run the harder benchmark suite against scissor, goose, or a custom agent")
+  .option("-a, --agent <name>", "agent to benchmark: scissor (default), goose, or custom")
+  .option("--agent-cmd <template>", 'for --agent custom: e.g. "mytool run -t {PROMPT}"')
+  .option("-p, --provider <ids>", 'for scissor: comma-separated providers, or "all"')
+  .option("-t, --task <ids>", "comma-separated task ids to run (default: all)")
+  .option("--json <path>", "write results JSON to a file")
+  .option("--keep", "keep temp workspaces for inspection")
+  .option("--strict", "exit non-zero if any task fails")
+  .option("--list", "list available benchmark tasks and exit")
+  .action(async (opts) => {
+    const { runBenchCommand } = await import("./commands/bench.js");
+    const code = await runBenchCommand(opts);
+    process.exit(code);
+  });
+
+program
   .command("supervise")
   .description(
     "run scissor under a supervisor so it can safely edit and reload its own code",
