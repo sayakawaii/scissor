@@ -14,6 +14,10 @@ config.json
 # eval run artifacts (machine-specific timings)
 evals/
 
+# MCP config (may contain env/secrets) and saved tool images
+mcp.json
+.scissor/
+
 # logs
 *.log
 npm-debug.log*

@@ -25,6 +25,10 @@ export interface ChatOptions {
   resume?: string;
   /** Disable the automated verification closed-loop. */
   noVerify?: boolean;
+  /** Enforce test-first (TDD) coding. */
+  tdd?: boolean;
+  /** Connect configured MCP servers. */
+  mcp?: boolean;
 }
 
 async function resolveResume(resume?: string): Promise<SessionData | undefined> {
@@ -67,6 +71,7 @@ export async function runOneShot(prompt: string, opts: ChatOptions): Promise<num
     return 1;
   } finally {
     process.off("SIGINT", onSigint);
+    await session.mcp?.dispose().catch(() => {});
   }
 }
 
@@ -118,6 +123,14 @@ interface LoopOptions {
 }
 
 async function replLoop(session: Session, loopOpts: LoopOptions): Promise<number> {
+  try {
+    return await replLoopInner(session, loopOpts);
+  } finally {
+    await session.mcp?.dispose().catch(() => {});
+  }
+}
+
+async function replLoopInner(session: Session, loopOpts: LoopOptions): Promise<number> {
   for (;;) {
     let line: string;
     try {

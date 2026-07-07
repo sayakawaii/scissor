@@ -9,6 +9,8 @@ import {
   defaultTools,
   chatTools,
   loadConfig,
+  loadMcpConfig,
+  McpManager,
   MissingApiKeyError,
   newSessionId,
   resolveModel,
@@ -17,6 +19,7 @@ import {
   type ProviderId,
   type ScissorConfig,
   type SessionData,
+  type Tool,
 } from "@scissor/core";
 import { makeVerifier } from "./verify-project.js";
 import {
@@ -47,6 +50,10 @@ export interface SessionOptions {
   resume?: SessionData;
   /** Disable the automated verification closed-loop. */
   noVerify?: boolean;
+  /** Enforce test-first (TDD) coding: block source edits until a test exists. */
+  tdd?: boolean;
+  /** Connect configured MCP servers and expose their tools (interactive use). */
+  mcp?: boolean;
 }
 
 export interface Session {
@@ -57,6 +64,24 @@ export interface Session {
   workspaceRoot: string;
   /** Metadata scaffold used to persist the session. */
   data: SessionData;
+  /** Live MCP connections, if any; caller must dispose() on exit. */
+  mcp?: McpManager;
+}
+
+/** Connect configured MCP servers, or return undefined when disabled/none. */
+async function connectMcp(
+  workspaceRoot: string,
+  enabled: boolean,
+): Promise<McpManager | undefined> {
+  if (!enabled || process.env.SCISSOR_NO_MCP === "1") return undefined;
+  const config = await loadMcpConfig().catch(() => ({ mcpServers: {} }));
+  if (Object.keys(config.mcpServers).length === 0) return undefined;
+  const mgr = await McpManager.connect({
+    config,
+    workspaceRoot,
+    onLog: (line) => process.stderr.write(theme.dim(line) + "\n"),
+  });
+  return mgr;
 }
 
 async function readMemory(workspaceRoot: string): Promise<string | undefined> {
@@ -75,6 +100,7 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
   const workspaceRoot = opts.resume?.workspaceRoot ?? opts.workspaceRoot ?? process.cwd();
   const approvalPolicy = opts.resume?.approvalPolicy ?? opts.approvalPolicy ?? "plan-gate";
   const selfEdit = opts.selfEdit ?? false;
+  const tdd = opts.tdd ?? config.tddMode ?? false;
 
   const memory = await readMemory(workspaceRoot);
   const repoMap = await buildRepoMap(workspaceRoot).catch(() => "");
@@ -85,14 +111,17 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     memory,
     repoMap,
     selfEdit,
+    tdd,
   });
 
   // Verification closed-loop applies only when the agent can edit files.
   const verify = opts.chatOnly
     ? undefined
-    : await makeVerifier(workspaceRoot, { enabled: !opts.noVerify });
+    : await makeVerifier(workspaceRoot, { enabled: !opts.noVerify, tdd });
 
-  const tools = opts.chatOnly ? chatTools() : defaultTools({ selfEdit });
+  const baseTools = opts.chatOnly ? chatTools() : defaultTools({ selfEdit });
+  const mcp = await connectMcp(workspaceRoot, opts.mcp === true);
+  const tools: Tool[] = mcp ? [...baseTools, ...mcp.tools] : baseTools;
   const agent = new Agent({
     provider,
     tools,
@@ -103,6 +132,7 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     protectedPaths: selfEdit ? SELF_PROTECTED_PATHS : [],
     verify,
     memoryFile: MEMORY_FILENAME,
+    tddMode: tdd,
   });
 
   const model = resolveModel(config, providerId);
@@ -121,7 +151,7 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
       messages: [],
     };
 
-  return { agent, config, providerId, model, workspaceRoot, data };
+  return { agent, config, providerId, model, workspaceRoot, data, mcp };
 }
 
 /** Persist the current transcript to the session file. */

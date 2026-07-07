@@ -13,6 +13,8 @@ export interface ProviderConfig {
 export interface ScissorConfig {
   defaultProvider: ProviderId;
   providers: Partial<Record<ProviderId, ProviderConfig>>;
+  /** Default test-first (TDD) enforcement when not overridden by a CLI flag. */
+  tddMode?: boolean;
 }
 
 /** Built-in defaults per provider: default model and base URL. */
@@ -133,6 +135,7 @@ function normalizeConfig(parsed: Partial<ScissorConfig>): ScissorConfig {
   return {
     defaultProvider,
     providers: parsed.providers ?? {},
+    tddMode: parsed.tddMode === true ? true : undefined,
   };
 }
 

@@ -14,6 +14,7 @@ import {
 } from "./commands/chat.js";
 import { runConfigWizard } from "./commands/config.js";
 import { runEvalCommand } from "./commands/eval.js";
+import { buildMcpCommand } from "./commands/mcp.js";
 import { createSession, persistSession } from "./session.js";
 import { getScissorRepoRoot } from "./self/repo.js";
 import { runSupervisor } from "./self/supervisor.js";
@@ -29,6 +30,10 @@ interface GlobalOpts {
   resume?: string;
   /** commander sets this to false when --no-verify is passed. */
   verify?: boolean;
+  /** commander sets this to false when --no-mcp is passed. */
+  mcp?: boolean;
+  /** Enforce test-first (TDD) coding. */
+  tdd?: boolean;
 }
 
 function resolveProvider(value: string | undefined): ProviderId | undefined {
@@ -53,6 +58,9 @@ function toChatOptions(opts: GlobalOpts): ChatOptions {
     chatOnly: opts.chatOnly,
     resume: opts.resume,
     noVerify: opts.verify === false,
+    // undefined when the flag is absent, so config.tddMode can still enable it.
+    tdd: opts.tdd === true ? true : undefined,
+    mcp: opts.mcp !== false,
   };
 }
 
@@ -67,6 +75,8 @@ program
   .option("--auto", "run everything automatically (only confirm dangerous actions)")
   .option("--chat-only", "disable file edits and command execution")
   .option("--no-verify", "disable the automated verification closed-loop")
+  .option("--no-mcp", "do not connect configured MCP servers this session")
+  .option("--tdd", "enforce test-first coding (block source edits until a test exists)")
   .option("--resume <id>", "resume a saved session by id or file path")
   .argument("[prompt...]", "prompt to run once, then exit (omit for interactive mode)")
   .action(async (promptParts: string[], opts: GlobalOpts) => {
@@ -142,6 +152,8 @@ program
     const code = await runBenchCommand(opts);
     process.exit(code);
   });
+
+program.addCommand(buildMcpCommand());
 
 program
   .command("supervise")

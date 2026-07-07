@@ -103,15 +103,32 @@ Current trimming just drops old rounds. Better:
 
 goose is a mature, general-purpose agent; the biggest deltas to close:
 
-- [ ] MCP support (goose's core extensibility model) — scissor has a fixed
-  built-in toolset, no external tool servers.
-- [ ] Non-coding tool breadth: web scraping, PDF/DOCX reading, browser
-  automation (goose ComputerController).
+- [x] MCP support (goose's core extensibility model): scissor has a built-in MCP
+  client (`packages/core/src/mcp/**`) + `scissor mcp` management, so any stdio or
+  Streamable-HTTP MCP server can extend the agent. External tools go through the
+  approval gate; images are saved to `.scissor/mcp-images/`.
+- [x] Browser automation / screenshots via the Playwright MCP preset
+  (`scissor mcp add browser`) — the open-ecosystem equivalent of Cursor's
+  built-in browser.
+- [x] Windows desktop control + screenshots via the Terminator MCP preset
+  (`scissor mcp add desktop`).
+- [ ] Non-coding tool breadth beyond the above (PDF/DOCX reading, etc.) — now a
+  matter of adding MCP servers rather than core code.
 - [ ] Recipes / parameterized reusable workflows (`--recipe`, sub-recipes).
 - [ ] Desktop app + REST server surface (scissor is CLI-only by design).
 - [ ] Breadth of provider integrations (goose 15–30+; scissor has 4).
 - [ ] Run the head-to-head once goose is installed (adapter is ready:
   `scissor bench --agent goose`).
+
+## 7c. Test-first (TDD) mode
+
+- [x] Opt-in hard gate (`--tdd` / config `tddMode`): the agent must create/edit a
+  test file before writing source code; source-first edits are rejected with
+  guidance. Non-code files are not gated. (`isTestFile`/`isSourceFile` in
+  `packages/core/src/tdd.ts`, enforced in `Agent.handleToolCall`.)
+- [x] The verification loop also runs the project `test` script in TDD mode.
+- [ ] Optionally require the new test to actually fail first (true red-green),
+  not just exist.
 
 ## 8. UX polish
 

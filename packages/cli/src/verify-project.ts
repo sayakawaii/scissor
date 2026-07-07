@@ -15,7 +15,10 @@ const NPM = process.platform === "win32" ? "npm.cmd" : "npm";
  * targets Node projects (package.json scripts). Prefers type-checking and
  * linting over tests/builds, which can be slow or have side effects.
  */
-export async function detectVerifyCommands(root: string): Promise<VerifyCommand[]> {
+export async function detectVerifyCommands(
+  root: string,
+  opts: { tdd?: boolean } = {},
+): Promise<VerifyCommand[]> {
   // Explicit override via environment.
   const override = process.env.SCISSOR_VERIFY_COMMANDS;
   if (override && override.trim()) {
@@ -36,6 +39,10 @@ export async function detectVerifyCommands(root: string): Promise<VerifyCommand[
       commands.push({ label: typecheckKey, line: `${NPM} run ${typecheckKey}` });
     }
     if (scripts["lint"]) commands.push({ label: "lint", line: `${NPM} run lint` });
+    // In TDD mode, correctness is proven by tests, so run them too.
+    if (opts.tdd && scripts["test"]) {
+      commands.push({ label: "test", line: `${NPM} test` });
+    }
   } catch {
     /* not a node project or no package.json */
   }
@@ -48,10 +55,10 @@ export async function detectVerifyCommands(root: string): Promise<VerifyCommand[
  */
 export async function makeVerifier(
   root: string,
-  opts: { enabled?: boolean } = {},
+  opts: { enabled?: boolean; tdd?: boolean } = {},
 ): Promise<VerifyFn | undefined> {
   if (opts.enabled === false || process.env.SCISSOR_NO_VERIFY === "1") return undefined;
-  const commands = await detectVerifyCommands(root);
+  const commands = await detectVerifyCommands(root, { tdd: opts.tdd });
   if (commands.length === 0) return undefined;
 
   return async (): Promise<VerificationResult> => {

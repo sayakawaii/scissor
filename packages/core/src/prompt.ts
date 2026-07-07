@@ -8,6 +8,8 @@ export interface PromptContext {
   repoMap?: string;
   /** When true, scissor is operating on its own source (self-edit mode). */
   selfEdit?: boolean;
+  /** When true, enforce a test-first (TDD) workflow. */
+  tdd?: boolean;
 }
 
 /** Build the system prompt that governs scissor's agent behavior. */
@@ -27,6 +29,16 @@ export function buildSystemPrompt(ctx: PromptContext): string {
         `- The supervisor verifies the new build (type-check + build) before switching. If it fails, your changes are rolled back automatically, so make focused, coherent changes.`,
         `- Some paths are protected and cannot be modified (the supervisor and safety machinery); respect the errors if you hit them.`,
         `- Prefer small, verifiable increments. After restarting, confirm the change took effect.`,
+      ]
+    : [];
+
+  const tddGuidance = ctx.tdd
+    ? [
+        ``,
+        `TDD MODE (test-first) is ENABLED:`,
+        `- Before writing or editing source code, FIRST write a test that specifies the desired behavior (a *.test.* file or a file under tests/).`,
+        `- Run the test to confirm it fails for the right reason (red), then implement the minimal code to make it pass (green), then refactor.`,
+        `- The environment enforces this: attempts to edit a source file before any test file has been created/edited this session are rejected.`,
       ]
     : [];
 
@@ -71,6 +83,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     `- Use paths relative to the workspace root.`,
     ``,
     `When you have fully addressed the request, stop calling tools and give a concise final summary of what you did.`,
+    ...tddGuidance,
     ...selfEditGuidance,
     ...repoMapBlock,
     ...memoryBlock,

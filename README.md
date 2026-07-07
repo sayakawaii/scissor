@@ -183,6 +183,55 @@ runs are POSIX-oriented (mac/Linux/WSL); on native Windows, run goose under WSL.
 
 Latest scissor baseline (DeepSeek `deepseek-chat`): **5/5 (100%)**.
 
+## MCP servers (external tools)
+
+scissor has a built-in [Model Context Protocol](https://modelcontextprotocol.io/)
+client, so you can extend the agent with any MCP server (browser automation,
+desktop control, databases, issue trackers, ...) without writing tool code. This
+is how scissor gets a browser/screenshot capability like Cursor's, and desktop
+control on Windows.
+
+Servers are configured in `~/.scissor/mcp.json` (Cursor-compatible), managed via:
+
+```bash
+scissor mcp add browser     # preset: Playwright MCP (npx @playwright/mcp) - navigate, click, screenshot
+scissor mcp add desktop     # preset: Terminator (npx terminator-mcp-agent) - operate/screenshot Windows apps
+scissor mcp add my-db --command uvx --arg my-db-mcp   # any stdio server
+scissor mcp add remote --url https://host/mcp         # remote Streamable HTTP server
+scissor mcp list            # show configured servers
+scissor mcp test [name]     # connect and list the tools a server exposes
+scissor mcp disable <name>  # keep the entry but don't connect it
+```
+
+At session start, scissor connects the enabled servers and exposes their tools
+to the agent as `mcp_<server>_<tool>`. Notes:
+
+- **Approval**: MCP tools run through the approval gate by default (external
+  tools can be destructive, e.g. desktop control). Allowlist specific tools with
+  `--auto-approve <tool>` on `mcp add`.
+- **Screenshots/images** returned by a tool are saved under
+  `.scissor/mcp-images/` in the workspace and the path is handed back to the
+  agent (works with every provider, including non-vision ones).
+- **Disable per session** with `--no-mcp` or `SCISSOR_NO_MCP=1`. A failing
+  server never breaks the session; it is skipped with a warning.
+- External-agent (npx) servers are POSIX-friendly and also run on Windows; the
+  `.cmd` shim is resolved automatically.
+
+## Test-first (TDD) mode
+
+Run with `--tdd` (or set `"tddMode": true` in `~/.scissor/config.json`) to force
+a red-green-refactor workflow:
+
+```bash
+scissor --tdd "add a retry helper with backoff"
+```
+
+When on, the agent must create/edit a **test file** before it is allowed to
+write or edit a **source-code file** (attempts to edit source first are rejected
+with guidance). The verification loop also runs the project's `test` script, so
+correctness is proven, not assumed. Non-code files (docs, config, data) are never
+gated.
+
 ## Safety model
 
 By default scissor uses a **plan-gate** flow: for non-trivial work it presents a numbered plan, waits for your approval, then executes the steps. Genuinely destructive commands are always confirmed. File operations are constrained to the current working directory.
@@ -193,7 +242,7 @@ By default scissor uses a **plan-gate** flow: for non-trivial work it presents a
 npm install
 npm run typecheck     # non-emitting type check
 npm run build         # tsup build (also used by the self-update verification gate)
-npm test              # deterministic tests (session, supervisor, retrieval, verify, edits, compaction, memory)
+npm test              # deterministic tests (session, supervisor, retrieval, verify, edits, compaction, memory, eval, bench, mcp, tdd)
 npm run smoke         # real-LLM tool-loop smoke (needs a provider key)
 npm run smoke:plan    # real-LLM plan-gate smoke
 npm run smoke:restart # real-LLM restart_self smoke

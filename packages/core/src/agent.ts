@@ -1,5 +1,6 @@
 import { CONTROL_TOOL_NAMES } from "./tools/control.js";
 import { buildSystemPrompt } from "./prompt.js";
+import { isSourceFile, isTestFile } from "./tdd.js";
 import type {
   LLMProvider,
   Message,
@@ -99,6 +100,12 @@ export interface AgentOptions {
   summarize?: SummarizeFn;
   /** Workspace-relative file used by the `remember` tool for long-term memory. */
   memoryFile?: string;
+  /**
+   * Test-first (TDD) mode. When true, the agent refuses to write/edit a
+   * non-test source file until at least one test file has been created or
+   * edited this session, nudging a red-green-refactor workflow.
+   */
+  tddMode?: boolean;
 }
 
 export interface RunResult {
@@ -129,6 +136,9 @@ export class Agent {
   private compactThreshold: number;
   private summarize: SummarizeFn;
   private memoryFile?: string;
+  private tddMode: boolean;
+  /** TDD gate: whether a test file has been created/edited this session. */
+  private testFileTouched = false;
   /** Set when restart_self is invoked during a run. */
   private pendingRestart?: { reason: string };
   /** Tools the user chose to "always" approve during this session. */
@@ -149,6 +159,7 @@ export class Agent {
     this.compactThreshold = opts.compactThreshold ?? Math.floor(this.maxContextChars * 0.7);
     this.summarize = opts.summarize ?? ((msgs) => this.summarizeWithProvider(msgs));
     this.memoryFile = opts.memoryFile;
+    this.tddMode = opts.tddMode ?? false;
     const system =
       opts.systemPrompt ??
       buildSystemPrompt({
@@ -176,6 +187,7 @@ export class Agent {
   reset(): void {
     this.messages = this.messages.slice(0, 1);
     this.alwaysApproved.clear();
+    this.testFileTouched = false;
   }
 
   /** Run one user request to completion (may span many model turns). */
@@ -375,6 +387,23 @@ export class Agent {
     const tool = this.toolMap.get(call.name);
     if (!tool) {
       return { content: `Unknown tool: ${call.name}`, isError: true };
+    }
+
+    // Test-first (TDD) gate: block source edits until a test exists.
+    if (this.tddMode && (call.name === "write_file" || call.name === "edit_file")) {
+      const target = String(call.arguments.path ?? "");
+      if (target && isTestFile(target)) {
+        this.testFileTouched = true;
+      } else if (target && isSourceFile(target) && !this.testFileTouched) {
+        return {
+          content:
+            `TDD mode is on: write a test first. "${target}" is source code, but no test ` +
+            `file has been created or edited yet this session. Create a failing test (e.g. ` +
+            `a *.test.* file or a file under tests/) that specifies the desired behavior, ` +
+            `then implement "${target}" to make it pass.`,
+          isError: true,
+        };
+      }
     }
 
     // Compute a preview (diff / command) for mutating tools.
