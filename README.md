@@ -1,15 +1,129 @@
 # scissor
 
-A personal, Cursor-like terminal AI coding agent for Windows (and cross-platform). Chat with an LLM that can read, search, edit files and run commands in your current directory. No login, no MCP, no plugin marketplace — just a fast local agent.
+A personal, Cursor-like terminal AI coding agent for Windows (and cross-platform). Chat with an LLM that can read, search, edit files and run commands in your current directory. No login, no plugin marketplace — just a fast local agent (with optional MCP tools).
 
 Supports four providers out of the box: **DeepSeek**, **Claude (Anthropic)**, **OpenAI GPT**, and **GLM (Zhipu)**.
 
 ## Architecture
 
-The project is a small monorepo with a strict engine / UI split so the core can later be reused by a GUI (e.g. Electron):
+scissor is a small npm-workspaces monorepo with a strict **engine / UI split**, so
+the core can later be reused by a GUI (e.g. Electron) without change:
 
-- `packages/core` — UI-agnostic engine: provider abstraction, agent loop, tools, config.
-- `packages/cli` — terminal UI: REPL, one-shot mode, rendering, approval prompts.
+- `packages/core` — UI-agnostic engine: provider abstraction + router, the agent
+  loop, tools, guardrails, prompt/retrieval, edit engine, MCP client, config and
+  session store. Zero terminal dependencies.
+- `packages/cli` — terminal UI: command wiring, REPL / one-shot, rendering and
+  approval prompts, session wiring, tracing + cost report, verification, the
+  self-iteration supervisor, and the eval/benchmark harness.
+
+### Components
+
+```mermaid
+flowchart TB
+  subgraph CLI["packages/cli — terminal UI"]
+    entry["index.ts · commands"]
+    repl["chat.ts · REPL / one-shot"]
+    sess["session.ts · wiring"]
+    ui["ui · render + prompts"]
+    trace["trace · JSONL + cost report"]
+    vproj["verify-project.ts"]
+    self["self · supervisor + checkpoint"]
+    evalh["eval + bench harness"]
+  end
+
+  subgraph CORE["packages/core — engine"]
+    agent["agent.ts · run loop"]
+    guards["guardrails · TDD / oscillation / approval"]
+    tools["tools · read/write/edit/shell/search/retrieve/remember + control"]
+    edit["edit-engine.ts"]
+    prompt["prompt.ts + repo-index.ts"]
+    prov["providers · router + adapters"]
+    mcp["mcp · client"]
+    store["config + session-store"]
+  end
+
+  subgraph EXT["external"]
+    llm["LLM APIs · DeepSeek / Claude / GPT / GLM"]
+    mcps["MCP servers"]
+    ws["workspace files + shell"]
+  end
+
+  entry --> repl --> sess
+  sess --> agent
+  sess --> prov
+  sess --> mcp
+  sess --> trace
+  sess --> store
+  repl --- ui
+  vproj --> agent
+  self --> sess
+  evalh --> sess
+
+  agent --> guards
+  agent --> tools
+  agent --> prompt
+  agent --> prov
+  tools --> edit
+  tools --> ws
+  mcp -. wrapped as tools .-> tools
+  prov --> llm
+  mcp --> mcps
+```
+
+### The agent loop
+
+Everything composes around one loop in `agent.ts`. A single "turn" calls the
+provider, runs any requested tools through the guardrail pipeline, feeds results
+back, and repeats until the model produces a final answer (or a limit is hit):
+
+```mermaid
+flowchart TD
+  U["User prompt"] --> P["Assemble context<br/>system prompt · repo map · scratchpad · memory"]
+  P --> C["Call LLM provider<br/>(router picks cheap/strong tier)"]
+  C --> D{"Tool calls?"}
+  D -->|"no — text only"| V{"Edits since last verify?"}
+  V -->|"yes"| VR["Run project verify<br/>(typecheck / lint / test)"]
+  VR -->|"fails"| C
+  VR -->|"ok"| Z["Return final answer"]
+  V -->|"no"| Z
+
+  D -->|"yes"| SPLIT["Partition calls"]
+  SPLIT --> RO["read-only calls<br/>run in parallel"]
+  SPLIT --> MU["mutating / control calls<br/>run sequentially"]
+  RO --> HT["per call: preview → guardrails<br/>TDD → user → approval"]
+  MU --> HT
+  HT -->|"veto"| BK["feed block/rejection back"]
+  HT -->|"allow"| EX["execute tool → afterTool guards"]
+  EX --> PUSH["push results in original order"]
+  BK --> PUSH
+  PUSH --> RS{"restart_self?"}
+  RS -->|"yes"| SUP["hand to supervisor:<br/>checkpoint · verify · reload"]
+  RS -->|"no"| CB{"Context over budget?"}
+  CB -->|"yes"| CO["compact / trim history"]
+  CO --> C
+  CB -->|"no"| C
+```
+
+### Key points
+
+- **One loop, composable concerns.** The loop stays small; cross-cutting behavior
+  is layered around it — tool policy via the **guardrail pipeline**
+  (`[TDD?] → user guards → approval`), token/cost visibility via **tracing**,
+  correctness via the **verification closed-loop**, and safe self-editing via the
+  **supervisor**. None of them are tangled into the core control flow.
+- **Engine is UI-agnostic.** `core` talks to the UI only through `AgentCallbacks`
+  (text, tool start/end, approval, ask/plan, verify, compact, sub-agent), so a
+  GUI can reuse it by implementing the same callbacks.
+- **Provider abstraction + router.** Every model is an `LLMProvider`; a heuristic
+  `RouterProvider` transparently routes each turn to a cheap or strong tier.
+- **Tools are plain data + `run()`.** Control tools (`ask_user`, `present_plan`,
+  `restart_self`, `update_scratchpad`, `spawn_subagent`) are intercepted in the
+  loop; MCP tools are discovered at runtime and wrapped as native tools.
+- **Session is the unit of memory.** Transcript + structured scratchpad, with
+  automatic compaction/trim, persisted to `~/.scissor/sessions` for resume and
+  restart continuity; durable facts live in `SCISSOR_MEMORY.md`.
+- **Local-first, minimal deps.** No server, no database, no vector store — just
+  files under `~/.scissor` and the workspace.
 
 ## Requirements
 
