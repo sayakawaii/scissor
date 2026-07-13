@@ -24,6 +24,7 @@ const opts: EvalCommandOptions = {
   keep: hasFlag("--keep"),
   list: hasFlag("--list"),
   strict: hasFlag("--strict"),
+  router: hasFlag("--router"),
 };
 
 const code = await runEvalCommand(opts);

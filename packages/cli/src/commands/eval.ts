@@ -21,6 +21,8 @@ export interface EvalCommandOptions {
   list?: boolean;
   /** Exit non-zero if any task fails. */
   strict?: boolean;
+  /** Run scissor with the heuristic model router enabled. */
+  router?: boolean;
 }
 
 function parseList(v?: string): string[] | undefined {
@@ -78,7 +80,7 @@ export async function runEvalCommand(opts: EvalCommandOptions): Promise<number> 
     }
   };
 
-  const runs = await runEval({ providers, taskIds, keep: opts.keep, onProgress });
+  const runs = await runEval({ providers, taskIds, keep: opts.keep, router: opts.router, onProgress });
 
   process.stdout.write(formatReport(runs));
 

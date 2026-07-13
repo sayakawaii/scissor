@@ -6,6 +6,7 @@ import {
   buildRepoMap,
   buildSystemPrompt,
   createProvider,
+  createRoutedProvider,
   defaultTools,
   chatTools,
   loadConfig,
@@ -16,6 +17,7 @@ import {
   resolveModel,
   saveSession,
   type ApprovalPolicy,
+  type LLMProvider,
   type ProviderId,
   type ScissorConfig,
   type SessionData,
@@ -54,6 +56,8 @@ export interface SessionOptions {
   tdd?: boolean;
   /** Connect configured MCP servers and expose their tools (interactive use). */
   mcp?: boolean;
+  /** Enable the heuristic model router (cheap/strong tiers). */
+  router?: boolean;
 }
 
 export interface Session {
@@ -84,6 +88,42 @@ async function connectMcp(
   return mgr;
 }
 
+/**
+ * Build the LLM provider for a session, honoring the heuristic router. The
+ * router is opt-in: enabled by --router (opts.router), config.router.enabled, or
+ * off. SCISSOR_NO_ROUTER=1 force-disables it. Returns the provider plus a model
+ * label for display/persistence.
+ */
+function createProviderForSession(
+  config: ScissorConfig,
+  providerId: ProviderId,
+  opts: SessionOptions,
+): { provider: LLMProvider; model: string } {
+  let routerEnabled = opts.router ?? config.router?.enabled ?? false;
+  if (process.env.SCISSOR_NO_ROUTER === "1") routerEnabled = false;
+
+  if (!routerEnabled) {
+    return { provider: createProvider(config, providerId), model: resolveModel(config, providerId) };
+  }
+
+  const routed = createRoutedProvider(config, providerId, {
+    onRoute: (d) => {
+      // Only surface escalations (strong tier); cheap turns are the quiet path.
+      if (d.tier === "strong") {
+        process.stderr.write(
+          theme.dim(`  \u21b3 router \u2192 ${d.tierLabel} [${d.reasons.join(", ") || `score ${d.score}`}]`) + "\n",
+        );
+      }
+    },
+  });
+  if (routed.degraded) {
+    process.stderr.write(
+      theme.warn("  router: no API key for the strong tier; using the cheap tier for all turns.") + "\n",
+    );
+  }
+  return { provider: routed.provider, model: routed.label };
+}
+
 async function readMemory(workspaceRoot: string): Promise<string | undefined> {
   try {
     return await fs.readFile(path.join(workspaceRoot, MEMORY_FILENAME), "utf8");
@@ -96,7 +136,7 @@ async function readMemory(workspaceRoot: string): Promise<string | undefined> {
 export async function createSession(opts: SessionOptions = {}): Promise<Session> {
   const config = applyEnvOverrides(await loadConfig());
   const providerId = opts.resume?.provider ?? opts.provider ?? config.defaultProvider;
-  const provider = createProvider(config, providerId);
+  const { provider, model } = createProviderForSession(config, providerId, opts);
   const workspaceRoot = opts.resume?.workspaceRoot ?? opts.workspaceRoot ?? process.cwd();
   const approvalPolicy = opts.resume?.approvalPolicy ?? opts.approvalPolicy ?? "plan-gate";
   const selfEdit = opts.selfEdit ?? false;
@@ -135,7 +175,6 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     tddMode: tdd,
   });
 
-  const model = resolveModel(config, providerId);
   const now = new Date().toISOString();
   const data: SessionData =
     opts.resume ?? {

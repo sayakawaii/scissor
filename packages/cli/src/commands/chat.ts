@@ -29,6 +29,8 @@ export interface ChatOptions {
   tdd?: boolean;
   /** Connect configured MCP servers. */
   mcp?: boolean;
+  /** Enable the heuristic model router (cheap/strong tiers). */
+  router?: boolean;
 }
 
 async function resolveResume(resume?: string): Promise<SessionData | undefined> {

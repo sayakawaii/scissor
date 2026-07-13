@@ -57,6 +57,8 @@ Options:
 - `--auto` — run everything automatically (only confirm dangerous actions)
 - `--chat-only` — disable file edits and command execution
 - `--no-verify` — disable the automated verification closed-loop
+- `--router` — route each turn to a cheap/strong model tier by difficulty
+- `--tdd` — enforce test-first coding (block source edits until a test exists)
 
 REPL slash commands: `/help`, `/reset`, `/compact`, `/remember <fact>`, `/info`, `/exit`.
 
@@ -78,6 +80,39 @@ from `package.json` scripts (`typecheck`/`type-check`/`tsc`, then `lint`).
 
 - Override the commands with `SCISSOR_VERIFY_COMMANDS="cmd1;cmd2"`.
 - Disable per-run with `--no-verify`, or globally with `SCISSOR_NO_VERIFY=1`.
+
+## Model router (token efficiency)
+
+Enable with `--router` (or `router.enabled` in config). Each turn is scored for
+difficulty and sent to a **cheap** tier by default, escalating to a **strong**
+tier only when the turn looks hard — so you spend premium tokens only where they
+matter. The routing is transparent (explainable signals, not a black-box model);
+strong-tier turns log a one-line reason to stderr.
+
+Signals (weights): a complex-intent keyword such as *refactor/debug/architecture/
+优化/并发* (+3), a failed verification on the previous turn (+3), large context
+(+2) or medium context (+1), and a long-running turn (+1). A turn escalates at a
+total score of 3 (configurable).
+
+Defaults with a single DeepSeek key: cheap `deepseek-chat`, strong
+`deepseek-reasoner` — no extra API key required. Configure tiers in
+`~/.scissor/config.json`:
+
+```json
+{
+  "router": {
+    "enabled": true,
+    "cheap":  { "provider": "deepseek", "model": "deepseek-chat" },
+    "strong": { "provider": "claude" },
+    "threshold": 3,
+    "escalateOnVerifyFail": true
+  }
+}
+```
+
+If the strong tier has no API key, the router degrades gracefully to the cheap
+tier. Force-disable for one run with `SCISSOR_NO_ROUTER=1`. Validate that routing
+doesn't hurt task success with `scissor eval --router`.
 
 ## Reliable edits
 

@@ -11,7 +11,22 @@ export * from "./mcp/client.js";
 export * from "./tools/index.js";
 export {
   createProvider,
+  createRoutedProvider,
   MissingApiKeyError,
   AnthropicProvider,
   OpenAICompatibleProvider,
+  RouterProvider,
+  routeTurn,
+  HARD_KEYWORDS,
+  ROUTE_WEIGHTS,
+  DEFAULT_ROUTE_THRESHOLD,
+} from "./providers/index.js";
+export type {
+  RoutedProvider,
+  CreateRoutedProviderOptions,
+  RouteDecision,
+  RouteInput,
+  RouteTier,
+  RouterTier,
+  RouterProviderOptions,
 } from "./providers/index.js";

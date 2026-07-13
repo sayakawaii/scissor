@@ -34,6 +34,8 @@ interface GlobalOpts {
   mcp?: boolean;
   /** Enforce test-first (TDD) coding. */
   tdd?: boolean;
+  /** Enable the heuristic model router. */
+  router?: boolean;
 }
 
 function resolveProvider(value: string | undefined): ProviderId | undefined {
@@ -61,6 +63,8 @@ function toChatOptions(opts: GlobalOpts): ChatOptions {
     // undefined when the flag is absent, so config.tddMode can still enable it.
     tdd: opts.tdd === true ? true : undefined,
     mcp: opts.mcp !== false,
+    // undefined when absent, so config.router.enabled can still enable it.
+    router: opts.router === true ? true : undefined,
   };
 }
 
@@ -77,6 +81,7 @@ program
   .option("--no-verify", "disable the automated verification closed-loop")
   .option("--no-mcp", "do not connect configured MCP servers this session")
   .option("--tdd", "enforce test-first coding (block source edits until a test exists)")
+  .option("--router", "route each turn to a cheap/strong model tier by difficulty")
   .option("--resume <id>", "resume a saved session by id or file path")
   .argument("[prompt...]", "prompt to run once, then exit (omit for interactive mode)")
   .action(async (promptParts: string[], opts: GlobalOpts) => {
@@ -130,6 +135,7 @@ program
   .option("--json <path>", "write results JSON to a file")
   .option("--keep", "keep temp workspaces for inspection")
   .option("--strict", "exit non-zero if any task fails")
+  .option("--router", "run scissor with the heuristic model router enabled")
   .option("--list", "list available tasks and exit")
   .action(async (opts) => {
     const code = await runEvalCommand(opts);

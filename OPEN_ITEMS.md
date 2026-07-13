@@ -65,6 +65,40 @@ Current trimming just drops old rounds. Better:
   call `remember`); detect durable facts and suggest saving them.
 - [ ] Sub-agents for large tasks (spawn a focused child agent, return a summary).
 
+### 4a. Short-term (working) memory handling — backlog
+
+The "short-term" memory is the live conversation window the model sees each turn.
+Today it is: full transcript → auto-compaction past a threshold → hard-trim of
+oldest rounds. Improvements to pursue:
+
+- [ ] Structured scratchpad: a small, always-injected "working set" (current
+  goal, files in play, last error, next step) maintained separately from the raw
+  transcript, so key state survives compaction verbatim instead of being
+  paraphrased into the summary.
+- [ ] Token-based budgeting instead of character counts (per-provider tokenizer),
+  and a per-turn context budget so retrieval/tool output can't blow the window.
+- [ ] Relevance-aware trimming: keep the messages most relevant to the current
+  request (e.g. the files it touches) rather than strictly the most recent.
+- [ ] Tool-output summarization: fold large tool results (long file reads, shell
+  output) into compact references once they're no longer the focus.
+- [ ] Tune when auto-compaction fires and how much recent context it preserves;
+  measure the effect on eval pass rate.
+
+### 4b. Long-term (persistent) memory handling — backlog
+
+Long-term memory is `SCISSOR_MEMORY.md` (durable facts) + saved sessions. Gaps:
+
+- [ ] Structured memory store instead of a flat markdown file: scoped entries
+  (project vs. global), timestamps, and dedup so the file doesn't grow unbounded.
+- [ ] Retrieval of long-term memory (only inject the entries relevant to the
+  current task, like codebase retrieval, rather than the whole file every time).
+- [ ] Semantic recall across past sessions (embed prior session summaries; surface
+  the relevant ones for a new, related task).
+- [ ] Memory hygiene: expire/curate stale facts; let the user review and edit
+  what was auto-remembered.
+- [ ] Decide precedence when memory conflicts with the current repo state (repo
+  wins) and make that explicit in the prompt.
+
 ## 5. Checkpoints & undo (beyond git)
 
 - Per-action snapshots so a single tool call can be undone without a full git reset.
@@ -73,9 +107,19 @@ Current trimming just drops old rounds. Better:
 
 ## 6. Provider/model robustness
 
+- [x] Heuristic model router: score each turn and route to a cheap or strong
+  model tier (opt-in via `--router` / config `router.enabled`). Escalates on
+  complex-intent keywords, large context, long-running turns, and failed
+  verification; degrades gracefully when the strong tier has no key. Validate
+  with `scissor eval --router`. (`packages/core/src/providers/router.ts`,
+  `resolveRouterTiers` in `config.ts`, `createRoutedProvider`.)
 - Retries with backoff on 429/5xx and transient network errors.
 - Streaming reasoning display for reasoning models (e.g. deepseek-reasoner).
-- Token accounting + cost estimate per turn/session.
+- Token accounting + cost estimate per turn/session (pairs well with the router:
+  attribute spend per tier to tune the threshold).
+- Learned/data-driven routing: replace the heuristic score with a tiny trained
+  classifier over past turns (à la OpenSquilla's SquillaRouter), keeping the
+  heuristic as the cold-start fallback.
 - Per-provider tool-calling quirks handled (some models format tool args loosely).
 - Real end-to-end validation for Claude / GPT / GLM (only DeepSeek is key-tested).
 

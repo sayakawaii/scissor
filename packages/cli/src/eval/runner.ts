@@ -43,10 +43,11 @@ export interface EvalSession {
 export type EvalSessionFactory = (opts: {
   workspaceRoot: string;
   provider?: ProviderId;
+  router?: boolean;
 }) => Promise<EvalSession>;
 
-const defaultSessionFactory: EvalSessionFactory = async ({ workspaceRoot, provider }) => {
-  const s = await createSession({ workspaceRoot, provider, approvalPolicy: "auto" });
+const defaultSessionFactory: EvalSessionFactory = async ({ workspaceRoot, provider, router }) => {
+  const s = await createSession({ workspaceRoot, provider, router, approvalPolicy: "auto" });
   return { agent: s.agent, providerId: s.providerId, model: s.model };
 };
 
@@ -64,11 +65,12 @@ export interface AgentTarget {
 export function scissorTarget(
   provider: ProviderId | undefined,
   factory: EvalSessionFactory = defaultSessionFactory,
+  targetOpts: { router?: boolean } = {},
 ): AgentTarget {
   return {
-    label: provider ?? "default",
+    label: (provider ?? "default") + (targetOpts.router ? "+router" : ""),
     async runTask(task, workspaceRoot, timeoutMs) {
-      const session = await factory({ workspaceRoot, provider });
+      const session = await factory({ workspaceRoot, provider, router: targetOpts.router });
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
@@ -197,6 +199,8 @@ export interface RunEvalOptions {
   timeoutMs?: number;
   onProgress?: (event: ProgressEvent) => void;
   sessionFactory?: EvalSessionFactory;
+  /** Run scissor with the heuristic model router enabled. */
+  router?: boolean;
 }
 
 /** Run the default eval suite with scissor for each provider. */
@@ -204,7 +208,7 @@ export async function runEval(opts: RunEvalOptions = {}): Promise<ProviderRun[]>
   const tasks = findTasks(opts.taskIds);
   const factory = opts.sessionFactory ?? defaultSessionFactory;
   const providers = opts.providers ?? [undefined as unknown as ProviderId];
-  const targets = providers.map((p) => scissorTarget(p, factory));
+  const targets = providers.map((p) => scissorTarget(p, factory, { router: opts.router }));
   return runSuite(tasks, targets, {
     keep: opts.keep,
     timeoutMs: opts.timeoutMs,

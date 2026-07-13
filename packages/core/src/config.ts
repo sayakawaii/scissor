@@ -10,11 +10,33 @@ export interface ProviderConfig {
   baseURL?: string;
 }
 
+/** One tier (cheap/strong) of the heuristic model router. */
+export interface RouterTierConfig {
+  /** Provider to use for this tier (defaults to the session's base provider). */
+  provider?: ProviderId;
+  /** Model override for this tier (defaults per provider, see PREMIUM_MODELS). */
+  model?: string;
+}
+
+/** Persistent config for the heuristic model router. */
+export interface RouterConfig {
+  /** Turn routing on by default (also toggled per-session with --router). */
+  enabled?: boolean;
+  cheap?: RouterTierConfig;
+  strong?: RouterTierConfig;
+  /** Score at/above which a turn escalates to the strong tier (default 3). */
+  threshold?: number;
+  /** Escalate to strong after a failed verification (default true). */
+  escalateOnVerifyFail?: boolean;
+}
+
 export interface ScissorConfig {
   defaultProvider: ProviderId;
   providers: Partial<Record<ProviderId, ProviderConfig>>;
   /** Default test-first (TDD) enforcement when not overridden by a CLI flag. */
   tddMode?: boolean;
+  /** Heuristic model router (cheap/strong tiers). Off unless enabled. */
+  router?: RouterConfig;
 }
 
 /** Built-in defaults per provider: default model and base URL. */
@@ -48,6 +70,18 @@ export const PROVIDER_DEFAULTS: Record<
 };
 
 export const PROVIDER_IDS: ProviderId[] = ["deepseek", "claude", "gpt", "glm"];
+
+/**
+ * Default "strong" tier model per provider, used by the router when the strong
+ * tier's model is not explicitly configured. Falls back to the provider default
+ * for providers whose default model is already the capable one.
+ */
+export const PREMIUM_MODELS: Record<ProviderId, string> = {
+  deepseek: "deepseek-reasoner",
+  claude: "claude-sonnet-4-20250514",
+  gpt: "gpt-4o",
+  glm: "glm-4-plus",
+};
 
 const DEFAULT_CONFIG: ScissorConfig = {
   defaultProvider: "deepseek",
@@ -95,7 +129,7 @@ export async function saveConfig(config: ScissorConfig): Promise<void> {
 /** Merge env-var overrides on top of stored config (env wins). */
 export function applyEnvOverrides(config: ScissorConfig): ScissorConfig {
   const merged: ScissorConfig = {
-    defaultProvider: config.defaultProvider,
+    ...config,
     providers: { ...config.providers },
   };
   const envMap: Record<ProviderId, string> = {
@@ -127,6 +161,36 @@ export function resolveBaseURL(config: ScissorConfig, id: ProviderId): string | 
   return config.providers[id]?.baseURL?.trim() || PROVIDER_DEFAULTS[id].baseURL;
 }
 
+export interface ResolvedRouterTiers {
+  cheap: { provider: ProviderId; model: string };
+  strong: { provider: ProviderId; model: string };
+  threshold: number;
+  escalateOnVerifyFail: boolean;
+}
+
+/**
+ * Resolve concrete router tiers from config, using `baseProvider` as the default
+ * for both tiers. The cheap tier defaults to the base provider's default model;
+ * the strong tier defaults to that provider's PREMIUM_MODELS entry.
+ */
+export function resolveRouterTiers(
+  config: ScissorConfig,
+  baseProvider: ProviderId,
+): ResolvedRouterTiers {
+  const r = config.router ?? {};
+  const cheapProvider = r.cheap?.provider ?? baseProvider;
+  const cheapModel = r.cheap?.model?.trim() || resolveModel(config, cheapProvider);
+  const strongProvider = r.strong?.provider ?? cheapProvider;
+  const strongModel =
+    r.strong?.model?.trim() || PREMIUM_MODELS[strongProvider] || resolveModel(config, strongProvider);
+  return {
+    cheap: { provider: cheapProvider, model: cheapModel },
+    strong: { provider: strongProvider, model: strongModel },
+    threshold: typeof r.threshold === "number" ? r.threshold : 3,
+    escalateOnVerifyFail: r.escalateOnVerifyFail ?? true,
+  };
+}
+
 function normalizeConfig(parsed: Partial<ScissorConfig>): ScissorConfig {
   const defaultProvider =
     parsed.defaultProvider && PROVIDER_IDS.includes(parsed.defaultProvider)
@@ -136,6 +200,7 @@ function normalizeConfig(parsed: Partial<ScissorConfig>): ScissorConfig {
     defaultProvider,
     providers: parsed.providers ?? {},
     tddMode: parsed.tddMode === true ? true : undefined,
+    router: parsed.router,
   };
 }
 
