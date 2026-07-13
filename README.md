@@ -187,6 +187,16 @@ stays focused instead of filling up with, say, a wide codebase investigation.
   further sub-agents, preventing runaway recursion.
 - Sub-agent start/finish is shown inline in the REPL.
 
+## Parallel tool execution
+
+When a single turn requests several **read-only** tool calls (non-mutating tools
+like `read_file`, `glob`, `grep`, `retrieve`), scissor runs them **concurrently**
+instead of one at a time — e.g. reading five files or grepping several patterns
+happens in one round trip's worth of wall time. Mutating tools (`write_file`,
+`edit_file`, `run_shell`, ...) and control tools still run **sequentially in
+order**, so approval prompts and side effects stay deterministic. Results are
+always fed back in the original call order, keeping the transcript valid.
+
 ## Guardrails (tool hooks)
 
 Every real tool call runs through a small **guardrail pipeline**: guards can veto

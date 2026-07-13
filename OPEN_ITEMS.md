@@ -68,6 +68,10 @@ Current trimming just drops old rounds. Better:
   workspace + worker tools) and returns only its summary; depth-guarded so
   children can't spawn children. (`runSubagent` in `packages/core/src/agent.ts`,
   `spawn_subagent` in `tools/control.ts`.)
+- [x] Parallel read-only tool execution: independent non-mutating tool calls in
+  a single turn run concurrently, while mutating/control calls stay sequential
+  and results are fed back in original order. (`isParallelSafe` + the tool loop
+  in `packages/core/src/agent.ts`.)
 
 ### 4a. Short-term (working) memory handling — backlog
 

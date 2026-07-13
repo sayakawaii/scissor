@@ -351,10 +351,43 @@ export class Agent {
         return { finalText: result.text, turns: turn, aborted: false };
       }
 
-      // Execute each requested tool call and feed results back.
-      for (const call of result.toolCalls) {
-        if (signal?.aborted) return { finalText, turns: turn, aborted: true };
-        const toolResult = await this.handleToolCall(call, ctx, callbacks, signal);
+      // Execute the requested tool calls and feed results back. Independent
+      // read-only calls (non-mutating, non-control) run concurrently; mutating
+      // and control calls run sequentially in order so approval prompts and
+      // side effects stay deterministic. Results are always pushed in the
+      // original call order to keep the transcript valid.
+      const calls = result.toolCalls;
+      const results = new Array<ToolResult | undefined>(calls.length);
+
+      const parallel = calls
+        .map((call, i) => ({ call, i }))
+        .filter(({ call }) => this.isParallelSafe(call));
+      if (parallel.length > 1) {
+        await Promise.all(
+          parallel.map(async ({ call, i }) => {
+            results[i] = await this.handleToolCall(call, ctx, callbacks, signal);
+          }),
+        );
+      } else if (parallel.length === 1) {
+        const { call, i } = parallel[0]!;
+        results[i] = await this.handleToolCall(call, ctx, callbacks, signal);
+      }
+
+      let aborted = false;
+      for (let i = 0; i < calls.length; i++) {
+        if (results[i] !== undefined) continue; // already ran in the parallel phase
+        if (signal?.aborted) {
+          aborted = true;
+          break;
+        }
+        results[i] = await this.handleToolCall(calls[i]!, ctx, callbacks, signal);
+      }
+
+      // Record results in order: track edits and push tool messages.
+      for (let i = 0; i < calls.length; i++) {
+        const toolResult = results[i];
+        if (toolResult === undefined) continue;
+        const call = calls[i]!;
         if (
           !toolResult.isError &&
           (call.name === "write_file" || call.name === "edit_file")
@@ -374,6 +407,8 @@ export class Agent {
           name: call.name,
         });
       }
+
+      if (aborted) return { finalText, turns: turn, aborted: true };
 
       // A restart was requested; hand control back so the supervisor can
       // verify + reload. The transcript already contains a tool result so it
@@ -409,6 +444,17 @@ export class Agent {
     };
     const call: ToolCall = { id: `manual-${Date.now()}`, name, arguments: args };
     return this.handleToolCall(call, ctx, callbacks, signal);
+  }
+
+  /**
+   * A tool call is safe to run concurrently with others in the same turn when it
+   * is a known, non-mutating, non-control tool: read-only tools have no side
+   * effects and don't depend on each other, so their order doesn't matter.
+   */
+  private isParallelSafe(call: ToolCall): boolean {
+    if ((CONTROL_TOOL_NAMES as readonly string[]).includes(call.name)) return false;
+    const tool = this.toolMap.get(call.name);
+    return !!tool && tool.mutating !== true;
   }
 
   /**
