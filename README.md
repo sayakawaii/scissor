@@ -187,6 +187,20 @@ stays focused instead of filling up with, say, a wide codebase investigation.
   further sub-agents, preventing runaway recursion.
 - Sub-agent start/finish is shown inline in the REPL.
 
+## Guardrails (tool hooks)
+
+Every real tool call runs through a small **guardrail pipeline**: guards can veto
+a call before it runs (`beforeTool`) and inspect or transform its result
+afterward (`afterTool`). This keeps cross-cutting policy (loop detection,
+redaction, custom rules) out of the core loop. A vetoed call is fed back to the
+model as an error so it changes course instead of proceeding.
+
+The CLI enables one built-in guard by default: an **oscillation guard** that
+blocks the *exact same* tool call after it has failed a few times (default 3),
+breaking retry loops and forcing the agent to try a different approach. Guards
+are pluggable via the Agent's `guardrails` option (`createOscillationGuard`, or
+your own `Guardrail`).
+
 ## Tracing (observability)
 
 Run with `--trace` (or `SCISSOR_TRACE=1`) to append a structured **JSONL** trace

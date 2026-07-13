@@ -6,6 +6,7 @@ export * from "./session-store.js";
 export * from "./repo-index.js";
 export * from "./edit-engine.js";
 export * from "./tdd.js";
+export * from "./guardrails.js";
 export * from "./mcp/config.js";
 export * from "./mcp/client.js";
 export * from "./tools/index.js";

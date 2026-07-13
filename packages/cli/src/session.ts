@@ -9,6 +9,7 @@ import {
   createRoutedProvider,
   defaultTools,
   chatTools,
+  createOscillationGuard,
   getConfigDir,
   loadConfig,
   loadMcpConfig,
@@ -193,6 +194,7 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     memoryFile: MEMORY_FILENAME,
     tddMode: tdd,
     initialScratchpad: opts.resume?.scratchpad,
+    guardrails: [createOscillationGuard()],
   });
 
   const now = new Date().toISOString();

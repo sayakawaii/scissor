@@ -89,6 +89,32 @@ export interface Tool {
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
 }
 
+/** Verdict returned by a guardrail's beforeTool hook. */
+export type GuardResult = { allow: true } | { allow: false; reason: string };
+
+/**
+ * A guardrail is a lightweight lifecycle hook around tool execution. It can veto
+ * a tool call before it runs (beforeTool) and/or inspect or transform a tool's
+ * result after it runs (afterTool). Guardrails compose: they run in order, and a
+ * single veto blocks the call. Kept intentionally simple so cross-cutting
+ * concerns (oscillation detection, redaction, custom policy) live outside the
+ * core loop.
+ */
+export interface Guardrail {
+  /** Stable identifier, surfaced in the block message and traces. */
+  name: string;
+  /** Authorize a tool call before it runs. Return a veto to block it. */
+  beforeTool?(call: ToolCall, ctx: ToolContext): GuardResult | Promise<GuardResult>;
+  /**
+   * Inspect a tool result after it runs. Return a new ToolResult to replace it
+   * (e.g. redaction), or nothing to leave it unchanged.
+   */
+  afterTool?(
+    call: ToolCall,
+    result: ToolResult,
+  ): ToolResult | void | Promise<ToolResult | void>;
+}
+
 /** Preview info surfaced to the UI before a mutating tool runs. */
 export interface ToolPreview {
   /** Short one-line summary, e.g. "edit src/index.ts" or "run: npm test". */

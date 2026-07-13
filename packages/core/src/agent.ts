@@ -2,6 +2,7 @@ import { CONTROL_TOOL_NAMES } from "./tools/control.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { isSourceFile, isTestFile } from "./tdd.js";
 import type {
+  Guardrail,
   LLMProvider,
   Message,
   Scratchpad,
@@ -129,6 +130,11 @@ export interface AgentOptions {
   subagentDepth?: number;
   /** Max sub-agent nesting depth allowed (default 1: children cannot spawn). */
   maxSubagentDepth?: number;
+  /**
+   * Guardrails run around every real tool call: they can veto a call before it
+   * runs and inspect/transform its result afterward. Run in array order.
+   */
+  guardrails?: Guardrail[];
 }
 
 export interface RunResult {
@@ -162,6 +168,7 @@ export class Agent {
   private tddMode: boolean;
   private subagentDepth: number;
   private maxSubagentDepth: number;
+  private guardrails: Guardrail[];
   /** System prompt without the dynamic scratchpad block appended. */
   private baseSystemPrompt: string;
   /** Structured working memory, pinned into the system prompt. */
@@ -191,6 +198,7 @@ export class Agent {
     this.tddMode = opts.tddMode ?? false;
     this.subagentDepth = opts.subagentDepth ?? 0;
     this.maxSubagentDepth = opts.maxSubagentDepth ?? 1;
+    this.guardrails = opts.guardrails ?? [];
     this.baseSystemPrompt =
       opts.systemPrompt ??
       buildSystemPrompt({
@@ -438,6 +446,7 @@ export class Agent {
       memoryFile: this.memoryFile,
       subagentDepth: this.subagentDepth + 1,
       maxSubagentDepth: this.maxSubagentDepth,
+      guardrails: this.guardrails,
     });
 
     callbacks.onSubagentStart?.(task, this.subagentDepth + 1);
@@ -545,6 +554,21 @@ export class Agent {
       }
     }
 
+    // Guardrail pipeline (before): let guards veto the call before it runs.
+    for (const guard of this.guardrails) {
+      if (!guard.beforeTool) continue;
+      const verdict = await guard.beforeTool(call, ctx);
+      if (!verdict.allow) {
+        const blocked: ToolResult = {
+          content: `Blocked by guardrail "${guard.name}": ${verdict.reason}`,
+          isError: true,
+        };
+        callbacks.onToolStart?.(call, undefined);
+        callbacks.onToolEnd?.(call, blocked);
+        return blocked;
+      }
+    }
+
     // Compute a preview (diff / command) for mutating tools.
     let preview: ToolPreview | undefined;
     if (tool.preview) {
@@ -575,6 +599,12 @@ export class Agent {
       result = await tool.run(call.arguments, { ...ctx, signal });
     } catch (err) {
       result = { content: `Tool error: ${(err as Error).message}`, isError: true };
+    }
+    // Guardrail pipeline (after): let guards inspect/transform the result.
+    for (const guard of this.guardrails) {
+      if (!guard.afterTool) continue;
+      const transformed = await guard.afterTool(call, result);
+      if (transformed) result = transformed;
     }
     callbacks.onToolEnd?.(call, result);
     return result;

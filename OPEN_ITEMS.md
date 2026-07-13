@@ -198,7 +198,11 @@ goose is a mature, general-purpose agent; the biggest deltas to close:
   gate, so self-edits that break behavior are rolled back. Skippable via
   `SCISSOR_SKIP_EVAL=1`, subset via `SCISSOR_SELFUPDATE_EVAL_TASKS`.
   (`verifySelfUpdate` in `packages/cli/src/self/verify.ts`)
-- Loop/oscillation detection: stop if the agent keeps failing the same self-edit.
+- [x] Loop/oscillation detection: the guardrail pipeline ships a built-in
+  oscillation guard that blocks the exact same tool call once it has failed
+  `limit` times (default 3), forcing a change of approach. Enabled by default in
+  the CLI session. (`createOscillationGuard` in `packages/core/src/guardrails.ts`;
+  pipeline in `handleToolCall`.)
 - Require explicit human approval for self-edits by default (plan-gate already
   helps; make it a hard gate for `restart_self`).
 - Persist a self-update changelog across generations.
