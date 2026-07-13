@@ -31,6 +31,8 @@ export interface ChatOptions {
   mcp?: boolean;
   /** Enable the heuristic model router (cheap/strong tiers). */
   router?: boolean;
+  /** Write a structured JSONL trace of the session. */
+  trace?: boolean;
 }
 
 async function resolveResume(resume?: string): Promise<SessionData | undefined> {
@@ -59,7 +61,7 @@ export async function runOneShot(prompt: string, opts: ChatOptions): Promise<num
   const onSigint = () => controller.abort();
   process.on("SIGINT", onSigint);
   try {
-    const result = await session.agent.run(prompt, makeCallbacks(renderer), controller.signal);
+    const result = await session.agent.run(prompt, makeCallbacks(renderer, session.tracer), controller.signal);
     renderer.finish();
     await persistSession(session).catch(() => {});
     if (result.aborted) {
@@ -74,6 +76,7 @@ export async function runOneShot(prompt: string, opts: ChatOptions): Promise<num
   } finally {
     process.off("SIGINT", onSigint);
     await session.mcp?.dispose().catch(() => {});
+    session.tracer?.close();
   }
 }
 
@@ -129,6 +132,7 @@ async function replLoop(session: Session, loopOpts: LoopOptions): Promise<number
     return await replLoopInner(session, loopOpts);
   } finally {
     await session.mcp?.dispose().catch(() => {});
+    session.tracer?.close();
   }
 }
 
@@ -162,7 +166,7 @@ async function replLoopInner(session: Session, loopOpts: LoopOptions): Promise<n
     try {
       const result = await session.agent.run(
         trimmed,
-        makeCallbacks(renderer),
+        makeCallbacks(renderer, session.tracer),
         controller.signal,
       );
       renderer.finish();
@@ -243,7 +247,7 @@ async function handleSlash(cmd: string, session: Session): Promise<"exit" | "con
         return "continue";
       }
       const renderer = new TurnRenderer();
-      const result = await session.agent.runTool("remember", { fact }, makeCallbacks(renderer));
+      const result = await session.agent.runTool("remember", { fact }, makeCallbacks(renderer, session.tracer));
       renderer.finish();
       process.stdout.write((result.isError ? theme.err : theme.ok)(result.content) + "\n");
       return "continue";

@@ -59,6 +59,7 @@ Options:
 - `--no-verify` — disable the automated verification closed-loop
 - `--router` — route each turn to a cheap/strong model tier by difficulty
 - `--tdd` — enforce test-first coding (block source edits until a test exists)
+- `--trace` — write a structured JSONL trace of the session to `~/.scissor/traces`
 
 REPL slash commands: `/help`, `/reset`, `/compact`, `/scratchpad`, `/remember <fact>`, `/info`, `/exit`.
 
@@ -185,6 +186,21 @@ stays focused instead of filling up with, say, a wide codebase investigation.
 - Depth is guarded (`maxSubagentDepth`, default 1): a sub-agent cannot spawn
   further sub-agents, preventing runaway recursion.
 - Sub-agent start/finish is shown inline in the REPL.
+
+## Tracing (observability)
+
+Run with `--trace` (or `SCISSOR_TRACE=1`) to append a structured **JSONL** trace
+of the session to `~/.scissor/traces/<session-id>.jsonl` — one JSON object per
+event: `session-start`, `turn`, `route` (which model tier was chosen and why),
+`tool` (name, ok, duration ms), `usage` (tokens), `verify`, `compact`,
+`subagent`, and `session-end`. It's off by default, best-effort (never breaks a
+run), and useful for debugging behavior, measuring tool timings, and tuning the
+router threshold / tracking token spend. Inspect it with any JSONL tool, e.g.:
+
+```bash
+scissor --trace "refactor the parser"
+cat ~/.scissor/traces/*.jsonl | jq 'select(.type=="tool")'
+```
 
 ## Self-iteration (experimental)
 

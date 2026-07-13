@@ -36,6 +36,8 @@ interface GlobalOpts {
   tdd?: boolean;
   /** Enable the heuristic model router. */
   router?: boolean;
+  /** Write a structured JSONL trace of the session. */
+  trace?: boolean;
 }
 
 function resolveProvider(value: string | undefined): ProviderId | undefined {
@@ -65,6 +67,7 @@ function toChatOptions(opts: GlobalOpts): ChatOptions {
     mcp: opts.mcp !== false,
     // undefined when absent, so config.router.enabled can still enable it.
     router: opts.router === true ? true : undefined,
+    trace: opts.trace === true ? true : undefined,
   };
 }
 
@@ -82,6 +85,7 @@ program
   .option("--no-mcp", "do not connect configured MCP servers this session")
   .option("--tdd", "enforce test-first coding (block source edits until a test exists)")
   .option("--router", "route each turn to a cheap/strong model tier by difficulty")
+  .option("--trace", "write a structured JSONL trace of the session to ~/.scissor/traces")
   .option("--resume <id>", "resume a saved session by id or file path")
   .argument("[prompt...]", "prompt to run once, then exit (omit for interactive mode)")
   .action(async (promptParts: string[], opts: GlobalOpts) => {

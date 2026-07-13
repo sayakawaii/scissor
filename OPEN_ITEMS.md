@@ -121,10 +121,13 @@ Long-term memory is `SCISSOR_MEMORY.md` (durable facts) + saved sessions. Gaps:
   verification; degrades gracefully when the strong tier has no key. Validate
   with `scissor eval --router`. (`packages/core/src/providers/router.ts`,
   `resolveRouterTiers` in `config.ts`, `createRoutedProvider`.)
+- [x] Structured JSONL tracing (`--trace` / `SCISSOR_TRACE=1`): per-session
+  events (turn, route, tool timing, usage, verify, compact, subagent) written to
+  `~/.scissor/traces/<id>.jsonl` for observability. (`packages/cli/src/trace.ts`)
 - Retries with backoff on 429/5xx and transient network errors.
 - Streaming reasoning display for reasoning models (e.g. deepseek-reasoner).
-- Token accounting + cost estimate per turn/session (pairs well with the router:
-  attribute spend per tier to tune the threshold).
+- Token accounting + cost estimate per turn/session (the `usage` trace events are
+  the raw material; still need aggregation + a cost table).
 - Learned/data-driven routing: replace the heuristic score with a tiny trained
   classifier over past turns (à la OpenSquilla's SquillaRouter), keeping the
   heuristic as the cold-start fallback.

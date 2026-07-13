@@ -9,6 +9,7 @@ import {
   createRoutedProvider,
   defaultTools,
   chatTools,
+  getConfigDir,
   loadConfig,
   loadMcpConfig,
   McpManager,
@@ -24,6 +25,7 @@ import {
   type Tool,
 } from "@scissor/core";
 import { makeVerifier } from "./verify-project.js";
+import { createTracer, type Tracer } from "./trace.js";
 import {
   banner,
   formatToolCallHeader,
@@ -58,6 +60,8 @@ export interface SessionOptions {
   mcp?: boolean;
   /** Enable the heuristic model router (cheap/strong tiers). */
   router?: boolean;
+  /** Write a structured JSONL trace of the session to ~/.scissor/traces. */
+  trace?: boolean;
 }
 
 export interface Session {
@@ -70,6 +74,8 @@ export interface Session {
   data: SessionData;
   /** Live MCP connections, if any; caller must dispose() on exit. */
   mcp?: McpManager;
+  /** Structured trace sink, if tracing is enabled; caller must close() on exit. */
+  tracer?: Tracer;
 }
 
 /** Connect configured MCP servers, or return undefined when disabled/none. */
@@ -98,6 +104,7 @@ function createProviderForSession(
   config: ScissorConfig,
   providerId: ProviderId,
   opts: SessionOptions,
+  tracer?: Tracer,
 ): { provider: LLMProvider; model: string } {
   let routerEnabled = opts.router ?? config.router?.enabled ?? false;
   if (process.env.SCISSOR_NO_ROUTER === "1") routerEnabled = false;
@@ -108,6 +115,13 @@ function createProviderForSession(
 
   const routed = createRoutedProvider(config, providerId, {
     onRoute: (d) => {
+      tracer?.record("route", {
+        tier: d.tier,
+        tierLabel: d.tierLabel,
+        model: d.model,
+        score: d.score,
+        reasons: d.reasons,
+      });
       // Only surface escalations (strong tier); cheap turns are the quiet path.
       if (d.tier === "strong") {
         process.stderr.write(
@@ -136,7 +150,12 @@ async function readMemory(workspaceRoot: string): Promise<string | undefined> {
 export async function createSession(opts: SessionOptions = {}): Promise<Session> {
   const config = applyEnvOverrides(await loadConfig());
   const providerId = opts.resume?.provider ?? opts.provider ?? config.defaultProvider;
-  const { provider, model } = createProviderForSession(config, providerId, opts);
+  const sessionId = opts.resume?.id ?? newSessionId();
+  const traceEnabled = opts.trace ?? process.env.SCISSOR_TRACE === "1";
+  const tracer = traceEnabled
+    ? createTracer(path.join(getConfigDir(), "traces", `${sessionId}.jsonl`))
+    : undefined;
+  const { provider, model } = createProviderForSession(config, providerId, opts, tracer);
   const workspaceRoot = opts.resume?.workspaceRoot ?? opts.workspaceRoot ?? process.cwd();
   const approvalPolicy = opts.resume?.approvalPolicy ?? opts.approvalPolicy ?? "plan-gate";
   const selfEdit = opts.selfEdit ?? false;
@@ -180,7 +199,7 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
   const data: SessionData =
     opts.resume ?? {
       formatVersion: 1,
-      id: newSessionId(),
+      id: sessionId,
       createdAt: now,
       updatedAt: now,
       provider: providerId,
@@ -191,7 +210,12 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
       messages: [],
     };
 
-  return { agent, config, providerId, model, workspaceRoot, data, mcp };
+  if (tracer) {
+    tracer.record("session-start", { sessionId, provider: providerId, model, workspaceRoot });
+    process.stderr.write(theme.dim(`  trace: ${tracer.filePath}`) + "\n");
+  }
+
+  return { agent, config, providerId, model, workspaceRoot, data, mcp, tracer };
 }
 
 /** Persist the current transcript to the session file. */
@@ -286,21 +310,47 @@ export class TurnRenderer {
   }
 }
 
-/** Wire the standard CLI callbacks around an agent run. */
-export function makeCallbacks(renderer: TurnRenderer) {
+/** Wire the standard CLI callbacks around an agent run, with optional tracing. */
+export function makeCallbacks(renderer: TurnRenderer, tracer?: Tracer) {
   return {
     onAssistantText: renderer.onAssistantText,
-    onTurnStart: renderer.onTurnStart,
-    onToolStart: renderer.onToolStart,
-    onToolEnd: renderer.onToolEnd,
+    onTurnStart: (turn: number) => {
+      renderer.onTurnStart();
+      tracer?.record("turn", { turn });
+    },
+    onToolStart: (call: Parameters<TurnRenderer["onToolStart"]>[0], preview?: Parameters<TurnRenderer["onToolStart"]>[1]) => {
+      tracer?.toolStart(call.id);
+      renderer.onToolStart(call, preview);
+    },
+    onToolEnd: (call: { id: string; name: string }, result: { isError?: boolean }) => {
+      renderer.onToolEnd(call, result as Parameters<TurnRenderer["onToolEnd"]>[1]);
+      tracer?.record("tool", { name: call.name, ok: !result.isError, ms: tracer?.toolMs(call.id) });
+    },
     onRequestApproval: promptApproval,
     onAskUser: promptAskUser,
     onPresentPlan: promptPlan,
+    onUsage: (u: { promptTokens?: number; completionTokens?: number; totalTokens?: number }) =>
+      tracer?.record("usage", { ...u }),
     onVerifyStart: renderer.onVerifyStart,
-    onVerifyResult: renderer.onVerifyResult,
-    onCompact: renderer.onCompact,
-    onSubagentStart: renderer.onSubagentStart,
-    onSubagentEnd: renderer.onSubagentEnd,
+    onVerifyResult: (r: { ok: boolean; summary: string; skipped?: boolean }) => {
+      renderer.onVerifyResult(r);
+      tracer?.record("verify", { ok: r.ok, summary: r.summary, skipped: r.skipped });
+    },
+    onCompact: (info: { summarizedMessages: number; beforeChars: number; afterChars: number }) => {
+      renderer.onCompact(info);
+      tracer?.record("compact", {
+        summarizedMessages: info.summarizedMessages,
+        saved: Math.max(0, info.beforeChars - info.afterChars),
+      });
+    },
+    onSubagentStart: (task: string, depth: number) => {
+      renderer.onSubagentStart(task, depth);
+      tracer?.record("subagent", { phase: "start", depth, task: task.slice(0, 200) });
+    },
+    onSubagentEnd: (summary: string, depth: number) => {
+      renderer.onSubagentEnd(summary, depth);
+      tracer?.record("subagent", { phase: "end", depth });
+    },
   };
 }
 
