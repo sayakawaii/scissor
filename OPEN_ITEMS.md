@@ -46,9 +46,16 @@ may not do.
 - [x] Detect the project's toolchain (package.json `typecheck`/`lint` scripts),
   with `SCISSOR_VERIFY_COMMANDS` override and `--no-verify` / `SCISSOR_NO_VERIFY`
   to disable. (`packages/cli/src/verify-project.ts`)
+- [x] `diagnostics` tool — an on-demand type-checker/linter feedback channel: the
+  agent can run the project's `typecheck`/`lint` script (or `tsc --noEmit`,
+  auto-detected; overridable) and gets back structured `file:line:col severity
+  message` diagnostics, optionally filtered to one file. A pragmatic slice of
+  "LSP as a feedback channel". (`packages/core/src/tools/diagnostics.ts`)
 - [ ] Broaden toolchain detection beyond Node (pytest, cargo, go test, etc.).
 - [ ] Run tests (not just typecheck/lint) when they are fast/safe.
 - [ ] Surface a concise diff + test summary at the end of a task.
+- [ ] Full LSP integration (persistent language server: go-to-def, references,
+  rename, hover) — the `diagnostics` tool covers the highest-value 80% for now.
 
 ## 4. Context compaction / long-horizon memory
 
@@ -156,6 +163,15 @@ Long-term memory is `SCISSOR_MEMORY.md` (durable facts) + saved sessions. Gaps:
   score scissor or any headless CLI agent; built-in **goose** adapter
   (`--agent goose`) and a `--agent custom --agent-cmd "... {PROMPT}"` template.
   (`packages/cli/src/eval/{runner,agents}.ts`)
+- [x] Harder bench task distilled from a real run: `json-csv-roundtrip` probes
+  RFC-4180 quoting + a lossless JSON↔CSV round trip (not just "a file exists").
+- [x] trace→eval flywheel (minimal): `scissor eval-gen [trace]` turns a real,
+  traced session into a *draft* regression eval case — it recovers the user
+  prompt and the files the agent produced and scaffolds a check. Traces now
+  record a `user` (prompt) event and write/edit `path`s to make this possible.
+  (`packages/cli/src/eval-gen.ts`, `commands/eval-gen.ts`)
+- [ ] Auto-tighten generated drafts (assert contents / run the program) and offer
+  to append accepted drafts straight into the suite.
 - [ ] More tasks (larger multi-file refactors, ambiguous requests) and difficulty
   tiers.
 - [ ] CI integration / historical trend tracking of pass rate.
@@ -193,6 +209,11 @@ goose is a mature, general-purpose agent; the biggest deltas to close:
 
 ## 8. UX polish
 
+- [x] Installable global command: root `bin` + `npm link` (documented in the
+  README) so `scissor` runs from any directory.
+- [x] `--auto` no longer stalls on plan approval: plans are auto-approved (shown
+  for visibility) while dangerous actions still confirm, so one-shot/piped runs
+  don't hang. (`autoApprovePlan` in `packages/cli/src/ui/prompts.ts`)
 - Better streaming layout, spinners during tool runs, syntax-highlighted code.
 - `/model` and `/provider` switching mid-session.
 - Richer diff rendering (word-level highlights).

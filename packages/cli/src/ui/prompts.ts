@@ -53,16 +53,35 @@ export async function promptAskUser(
   return await input({ message: "Your answer" });
 }
 
-/** Handle the present_plan control tool. */
-export async function promptPlan(
-  summary: string,
-  steps: string[],
-): Promise<PlanDecision> {
+function renderPlan(summary: string, steps: string[]): void {
   process.stdout.write("\n" + theme.brand.bold("Plan") + "\n");
   if (summary) process.stdout.write(theme.dim(summary) + "\n");
   steps.forEach((step, i) => {
     process.stdout.write(`  ${theme.info(String(i + 1) + ".")} ${step}\n`);
   });
+}
+
+/**
+ * Non-interactive plan handler for `--auto`: show the plan for visibility, then
+ * approve without blocking on a prompt. A plan is not a mutating/dangerous
+ * action, so under `--auto` it should not stop the run (important for one-shot
+ * and piped invocations, where an interactive prompt would hang forever).
+ */
+export async function autoApprovePlan(
+  summary: string,
+  steps: string[],
+): Promise<PlanDecision> {
+  renderPlan(summary, steps);
+  process.stdout.write(theme.dim("  (auto-approved)\n"));
+  return { action: "approve" };
+}
+
+/** Handle the present_plan control tool. */
+export async function promptPlan(
+  summary: string,
+  steps: string[],
+): Promise<PlanDecision> {
+  renderPlan(summary, steps);
   const decision = await select<"approve" | "revise" | "reject">({
     message: "Approve this plan?",
     choices: [

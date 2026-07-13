@@ -162,4 +162,41 @@ export const BENCH_TASKS: EvalTask[] = [
         : { pass: false, detail: `did not answer 1.3.0: ${finalText.slice(0, 80)}` };
     },
   },
+  {
+    // Distilled from a real scissor session (see `scissor eval-gen`): probes
+    // correct RFC-4180 quoting and a lossless round trip, not just "a file exists".
+    id: "json-csv-roundtrip",
+    title: "Build a JSON<->CSV converter with correct quoting",
+    tags: ["write", "reason", "multi-step", "shell"],
+    prompt:
+      "Create convert.js (CommonJS, dependency-free) exporting two functions. " +
+      "jsonToCsv(records): records is an array of flat objects with string values; " +
+      "return an RFC-4180 CSV string whose header row is the keys of the first record, " +
+      "quoting any field containing a comma, double quote, or newline, and doubling " +
+      "embedded double quotes. csvToJson(text): parse such CSV back into an array of " +
+      "objects (string values). A json->csv->json round trip must return the original " +
+      "records. Verify it works.",
+    async check(dir) {
+      if (!(await exists(dir, "convert.js"))) return { pass: false, detail: "convert.js not created" };
+      const probe = [
+        "const { jsonToCsv, csvToJson } = require('./convert.js');",
+        "const recs = [{ name: 'Alice, Jr.', note: 'she said \"hi\"' }, { name: 'Bob', note: 'plain' }];",
+        "const csv = jsonToCsv(recs);",
+        "if (!csv.includes('\"Alice, Jr.\"')) throw new Error('comma field not quoted');",
+        "if (!csv.includes('\"she said \"\"hi\"\"\"')) throw new Error('embedded quote not doubled');",
+        "const back = csvToJson(csv).filter((r) => r && r.name);",
+        "if (back.length !== 2) throw new Error('expected 2 rows, got ' + back.length);",
+        "if (back[0].name !== 'Alice, Jr.' || back[0].note !== 'she said \"hi\"') throw new Error('row0 mismatch: ' + JSON.stringify(back[0]));",
+        "if (back[1].name !== 'Bob' || back[1].note !== 'plain') throw new Error('row1 mismatch: ' + JSON.stringify(back[1]));",
+        "console.log('OK');",
+        "",
+      ].join("\n");
+      await write(dir, "__probe.js", probe);
+      const r = await node(dir, "__probe.js");
+      if (!r.ok) return { pass: false, detail: `round trip failed: ${r.out.slice(0, 120)}` };
+      return r.out.includes("OK")
+        ? { pass: true, detail: "RFC-4180 quoting + lossless round trip" }
+        : { pass: false, detail: `probe output: ${JSON.stringify(r.out.slice(0, 80))}` };
+    },
+  },
 ];

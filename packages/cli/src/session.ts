@@ -33,7 +33,7 @@ import {
   formatToolResult,
   theme,
 } from "./ui/render.js";
-import { promptApproval, promptAskUser, promptPlan } from "./ui/prompts.js";
+import { autoApprovePlan, promptApproval, promptAskUser, promptPlan } from "./ui/prompts.js";
 
 /** Long-term memory file loaded into the system prompt when present. */
 export const MEMORY_FILENAME = "SCISSOR_MEMORY.md";
@@ -312,8 +312,13 @@ export class TurnRenderer {
   }
 }
 
+export interface CallbackOptions {
+  /** Auto-approve plans instead of prompting (used under --auto). */
+  autoApprovePlan?: boolean;
+}
+
 /** Wire the standard CLI callbacks around an agent run, with optional tracing. */
-export function makeCallbacks(renderer: TurnRenderer, tracer?: Tracer) {
+export function makeCallbacks(renderer: TurnRenderer, tracer?: Tracer, opts: CallbackOptions = {}) {
   return {
     onAssistantText: renderer.onAssistantText,
     onTurnStart: (turn: number) => {
@@ -324,13 +329,26 @@ export function makeCallbacks(renderer: TurnRenderer, tracer?: Tracer) {
       tracer?.toolStart(call.id);
       renderer.onToolStart(call, preview);
     },
-    onToolEnd: (call: { id: string; name: string }, result: { isError?: boolean }) => {
+    onToolEnd: (
+      call: { id: string; name: string; arguments?: Record<string, unknown> },
+      result: { isError?: boolean },
+    ) => {
       renderer.onToolEnd(call, result as Parameters<TurnRenderer["onToolEnd"]>[1]);
-      tracer?.record("tool", { name: call.name, ok: !result.isError, ms: tracer?.toolMs(call.id) });
+      const path =
+        (call.name === "write_file" || call.name === "edit_file") &&
+        typeof call.arguments?.path === "string"
+          ? call.arguments.path
+          : undefined;
+      tracer?.record("tool", {
+        name: call.name,
+        ok: !result.isError,
+        ms: tracer?.toolMs(call.id),
+        ...(path ? { path } : {}),
+      });
     },
     onRequestApproval: promptApproval,
     onAskUser: promptAskUser,
-    onPresentPlan: promptPlan,
+    onPresentPlan: opts.autoApprovePlan ? autoApprovePlan : promptPlan,
     onUsage: (u: { promptTokens?: number; completionTokens?: number; totalTokens?: number }) =>
       tracer?.record("usage", { ...u }),
     onVerifyStart: renderer.onVerifyStart,

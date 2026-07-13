@@ -61,7 +61,13 @@ export async function runOneShot(prompt: string, opts: ChatOptions): Promise<num
   const onSigint = () => controller.abort();
   process.on("SIGINT", onSigint);
   try {
-    const result = await session.agent.run(prompt, makeCallbacks(renderer, session.tracer), controller.signal);
+    session.tracer?.record("user", { prompt });
+    const cbOpts = { autoApprovePlan: session.data.approvalPolicy === "auto" };
+    const result = await session.agent.run(
+      prompt,
+      makeCallbacks(renderer, session.tracer, cbOpts),
+      controller.signal,
+    );
     renderer.finish();
     await persistSession(session).catch(() => {});
     if (result.aborted) {
@@ -164,9 +170,12 @@ async function replLoopInner(session: Session, loopOpts: LoopOptions): Promise<n
     const onSigint = () => controller.abort();
     process.on("SIGINT", onSigint);
     try {
+      session.tracer?.record("user", { prompt: trimmed });
       const result = await session.agent.run(
         trimmed,
-        makeCallbacks(renderer, session.tracer),
+        makeCallbacks(renderer, session.tracer, {
+          autoApprovePlan: session.data.approvalPolicy === "auto",
+        }),
         controller.signal,
       );
       renderer.finish();

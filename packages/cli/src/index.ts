@@ -176,6 +176,17 @@ program
   });
 
 program
+  .command("eval-gen [idOrPath]")
+  .description("generate a draft regression eval case from a session trace (default: latest)")
+  .option("--out <path>", "write the draft to this file")
+  .option("--id <id>", "override the generated task id")
+  .option("--print", "print the draft to stdout instead of writing a file")
+  .action(async (target: string | undefined, opts: { out?: string; id?: string; print?: boolean }) => {
+    const { runEvalGenCommand } = await import("./commands/eval-gen.js");
+    process.exit(await runEvalGenCommand(target, opts));
+  });
+
+program
   .command("supervise")
   .description(
     "run scissor under a supervisor so it can safely edit and reload its own code",

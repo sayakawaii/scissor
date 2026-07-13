@@ -34,7 +34,7 @@ flowchart TB
   subgraph CORE["packages/core — engine"]
     agent["agent.ts · run loop"]
     guards["guardrails · TDD / oscillation / approval"]
-    tools["tools · read/write/edit/shell/search/retrieve/remember + control"]
+    tools["tools · read/write/edit/shell/search/retrieve/diagnostics/remember + control"]
     edit["edit-engine.ts"]
     prompt["prompt.ts + repo-index.ts"]
     prov["providers · router + adapters"]
@@ -138,6 +138,23 @@ npm run build
 
 To run without building, use `npm run dev -- <args>` (executes via `tsx`).
 
+### Make `scissor` available everywhere
+
+The repo exposes a `scissor` bin. After building, link it onto your `PATH` once:
+
+```bash
+npm install
+npm run build
+npm link          # creates a global `scissor` command (Windows: scissor.cmd)
+```
+
+Now `scissor` works from any directory. To undo it later: `npm unlink -g scissor`.
+If you don't want a global command, you can always run it in-repo via
+`npm run scissor -- <args>` or `node packages/cli/dist/index.js <args>`.
+
+> Note: `npm link` points the global command at this repo's build, so re-run
+> `npm run build` after pulling changes. (The pre-push gate rebuilds for you.)
+
 ## Configure
 
 Run the interactive wizard to store API keys in `~/.scissor/config.json`:
@@ -195,6 +212,14 @@ from `package.json` scripts (`typecheck`/`type-check`/`tsc`, then `lint`).
 
 - Override the commands with `SCISSOR_VERIFY_COMMANDS="cmd1;cmd2"`.
 - Disable per-run with `--no-verify`, or globally with `SCISSOR_NO_VERIFY=1`.
+
+Beyond the automatic loop, the agent can also *ask* for semantic feedback on
+demand via the **`diagnostics` tool** — a pragmatic slice of "LSP as a feedback
+channel". It runs the project's type-checker/linter (an auto-detected
+`typecheck`/`lint` script, or `tsc --noEmit` from `tsconfig.json`; overridable
+with a `command`) and returns structured `file:line:col severity message`
+diagnostics, optionally filtered to a single file — so the model fixes real type
+errors instead of guessing from `grep`.
 
 ## Model router (token efficiency)
 
@@ -362,6 +387,23 @@ scissor trace              # report on the latest traced session
 scissor trace --list       # list available traces
 scissor trace <id> --json  # machine-readable report
 ```
+
+### trace → eval flywheel
+
+Real sessions are the best source of regression tests. `scissor eval-gen` turns a
+traced session into a **draft eval case**: it recovers the original prompt and the
+files the agent produced, and scaffolds a check that asserts those artifacts
+reappear. Review it, tighten the check (assert contents / run the program), and
+move it into the eval or bench suite — so the eval signal grows from actual use.
+
+```bash
+scissor --trace "build a JSON<->CSV converter with tests"   # produces a trace
+scissor eval-gen                    # draft from the latest trace -> evals/generated/
+scissor eval-gen <id> --print       # print the draft to stdout instead
+```
+
+(The `json-csv-roundtrip` bench task was seeded exactly this way, then tightened
+to check RFC-4180 quoting and a lossless round trip.)
 
 ## Self-iteration (experimental)
 
