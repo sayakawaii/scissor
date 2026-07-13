@@ -199,17 +199,26 @@ always fed back in the original call order, keeping the transcript valid.
 
 ## Guardrails (tool hooks)
 
-Every real tool call runs through a small **guardrail pipeline**: guards can veto
-a call before it runs (`beforeTool`) and inspect or transform its result
-afterward (`afterTool`). This keeps cross-cutting policy (loop detection,
-redaction, custom rules) out of the core loop. A vetoed call is fed back to the
-model as an error so it changes course instead of proceeding.
+Every real tool call runs through one **guardrail pipeline** of unified
+lifecycle hooks: a guard can veto a call before it runs (`beforeTool`) and
+inspect or transform its result afterward (`afterTool`). A veto may carry a
+custom result (or synthesize a generic "blocked" error) that is fed back to the
+model so it changes course. This keeps *all* cross-cutting policy in one place
+instead of scattered through the core loop — the built-in behaviors are all
+guardrails:
 
-The CLI enables one built-in guard by default: an **oscillation guard** that
-blocks the *exact same* tool call after it has failed a few times (default 3),
-breaking retry loops and forcing the agent to try a different approach. Guards
-are pluggable via the Agent's `guardrails` option (`createOscillationGuard`, or
-your own `Guardrail`).
+- **TDD gate** (`createTddGuard`, active with `--tdd`) — blocks source edits
+  until a test file has been touched this session.
+- **Oscillation guard** (`createOscillationGuard`, on by default) — blocks the
+  *exact same* tool call after it has failed a few times (default 3), breaking
+  retry loops.
+- **Approval gate** (`createApprovalGuard`, always last) — prompts for mutating
+  calls per the approval policy; remembers "always", and a rejection is fed back
+  as a non-error so the agent tries something else.
+
+The effective order per call is `[TDD?] → [your guards] → approval`. Guards are
+pluggable via the Agent's `guardrails` option, and each may implement `reset()`
+to clear per-session state.
 
 ## Tracing (observability)
 

@@ -89,22 +89,53 @@ export interface Tool {
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
 }
 
-/** Verdict returned by a guardrail's beforeTool hook. */
-export type GuardResult = { allow: true } | { allow: false; reason: string };
+/** How much the agent must confirm before running mutating tools. */
+export type ApprovalPolicy = "plan-gate" | "confirm-each" | "auto";
+
+/** The user's decision when asked to approve a mutating tool call. */
+export type ApprovalDecision = "approve" | "reject" | "always";
 
 /**
- * A guardrail is a lightweight lifecycle hook around tool execution. It can veto
- * a tool call before it runs (beforeTool) and/or inspect or transform a tool's
+ * Context handed to a guardrail's beforeTool hook: everything a policy hook may
+ * need to make a decision (the resolved tool, its preview, the execution
+ * context, the current approval policy, and a way to ask the user to approve).
+ */
+export interface GuardContext {
+  /** The resolved tool that is about to run. */
+  tool: Tool;
+  /** Preview (diff / command) computed for the call, if the tool provides one. */
+  preview?: ToolPreview;
+  /** The tool execution context (workspace root, protected paths, ...). */
+  ctx: ToolContext;
+  /** The agent's current approval policy. */
+  policy: ApprovalPolicy;
+  signal?: AbortSignal;
+  /** Ask the user to approve a mutating call (present when a UI is wired). */
+  requestApproval?(call: ToolCall, preview: ToolPreview): Promise<ApprovalDecision>;
+}
+
+/**
+ * Verdict returned by a guardrail's beforeTool hook. A veto may carry a custom
+ * ToolResult to feed back (e.g. a non-error "user rejected" message); otherwise
+ * the pipeline synthesizes a generic "blocked" error from `reason`.
+ */
+export type GuardResult =
+  | { allow: true }
+  | { allow: false; reason: string; result?: ToolResult };
+
+/**
+ * A guardrail is a unified lifecycle hook around tool execution. It can veto a
+ * tool call before it runs (beforeTool) and/or inspect or transform a tool's
  * result after it runs (afterTool). Guardrails compose: they run in order, and a
- * single veto blocks the call. Kept intentionally simple so cross-cutting
- * concerns (oscillation detection, redaction, custom policy) live outside the
- * core loop.
+ * single veto blocks the call. Cross-cutting concerns — test-first (TDD) gating,
+ * approval prompts, oscillation detection, redaction, custom policy — are all
+ * expressed as guardrails so they live in one pipeline instead of the core loop.
  */
 export interface Guardrail {
   /** Stable identifier, surfaced in the block message and traces. */
   name: string;
   /** Authorize a tool call before it runs. Return a veto to block it. */
-  beforeTool?(call: ToolCall, ctx: ToolContext): GuardResult | Promise<GuardResult>;
+  beforeTool?(call: ToolCall, gctx: GuardContext): GuardResult | Promise<GuardResult>;
   /**
    * Inspect a tool result after it runs. Return a new ToolResult to replace it
    * (e.g. redaction), or nothing to leave it unchanged.
@@ -113,6 +144,8 @@ export interface Guardrail {
     call: ToolCall,
     result: ToolResult,
   ): ToolResult | void | Promise<ToolResult | void>;
+  /** Reset any per-session state (called on Agent.reset()). */
+  reset?(): void;
 }
 
 /** Preview info surfaced to the UI before a mutating tool runs. */

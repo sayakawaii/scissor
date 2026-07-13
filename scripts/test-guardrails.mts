@@ -11,9 +11,12 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import {
   Agent,
+  createApprovalGuard,
   createOscillationGuard,
+  createTddGuard,
   type ChatParams,
   type ChatResult,
+  type GuardContext,
   type Guardrail,
   type LLMProvider,
   type Tool,
@@ -149,6 +152,133 @@ function makeTool(name: string, run: Tool["run"]): Tool {
     { allow: true },
     "success cleared the streak",
   );
+}
+
+// 5. Built-in TDD guard: blocks source edits until a test is touched; reset()
+//    restores the initial state.
+{
+  const g = createTddGuard();
+  const gctx = {} as GuardContext; // the tdd guard ignores gctx
+  const srcCall = { id: "1", name: "write_file", arguments: { path: "src/foo.ts" } };
+  const testCall = { id: "2", name: "write_file", arguments: { path: "src/foo.test.ts" } };
+
+  const blockedFirst = await g.beforeTool!(srcCall as never, gctx);
+  assert.equal(blockedFirst.allow, false, "source blocked before any test");
+  assert.ok(!blockedFirst.allow && /TDD mode is on/.test(blockedFirst.result!.content));
+  assert.ok(!blockedFirst.allow && blockedFirst.result!.isError === true);
+
+  const testOk = await g.beforeTool!(testCall as never, gctx);
+  assert.equal(testOk.allow, true, "editing a test file is allowed and records the touch");
+
+  const srcOk = await g.beforeTool!(srcCall as never, gctx);
+  assert.equal(srcOk.allow, true, "source allowed once a test exists");
+
+  g.reset!();
+  const blockedAgain = await g.beforeTool!(srcCall as never, gctx);
+  assert.equal(blockedAgain.allow, false, "reset() clears the test-touched state");
+}
+
+// 6. Built-in approval guard: rejects/approves per policy, remembers "always",
+//    and reset() forgets it. Non-mutating tools pass through.
+{
+  const g = createApprovalGuard();
+  const mutTool: Tool = {
+    name: "write_thing",
+    description: "",
+    parameters: { type: "object", properties: {} },
+    mutating: true,
+    run: async () => ({ content: "ok" }),
+  };
+  const readTool: Tool = {
+    name: "read_thing",
+    description: "",
+    parameters: { type: "object", properties: {} },
+    run: async () => ({ content: "ok" }),
+  };
+  const base = {
+    preview: { summary: "do it" },
+    ctx: { workspaceRoot: os.tmpdir() },
+    policy: "confirm-each" as const,
+  };
+  const call = { id: "1", name: "write_thing", arguments: {} };
+
+  // Non-mutating tool: allowed without asking.
+  const readVerdict = await g.beforeTool!(
+    { id: "r", name: "read_thing", arguments: {} } as never,
+    { ...base, tool: readTool, requestApproval: async () => "reject" } as GuardContext,
+  );
+  assert.equal(readVerdict.allow, true, "non-mutating tool skips approval");
+
+  // Reject -> blocked with a non-error, retry-discouraging message.
+  const rejected = await g.beforeTool!(call as never, {
+    ...base,
+    tool: mutTool,
+    requestApproval: async () => "reject",
+  } as GuardContext);
+  assert.equal(rejected.allow, false);
+  assert.ok(!rejected.allow && /User rejected this action/.test(rejected.result!.content));
+  assert.ok(!rejected.allow && rejected.result!.isError === false, "rejection is not an error");
+
+  // Approve "always" -> allowed, and remembered so later calls don't re-prompt.
+  const approvedAlways = await g.beforeTool!(call as never, {
+    ...base,
+    tool: mutTool,
+    requestApproval: async () => "always",
+  } as GuardContext);
+  assert.equal(approvedAlways.allow, true);
+
+  let asked = false;
+  const remembered = await g.beforeTool!(call as never, {
+    ...base,
+    tool: mutTool,
+    requestApproval: async () => {
+      asked = true;
+      return "reject";
+    },
+  } as GuardContext);
+  assert.equal(remembered.allow, true, "always-approved tool not re-prompted");
+  assert.equal(asked, false, "requestApproval not called after always");
+
+  // reset() forgets the "always" grant.
+  g.reset!();
+  const afterReset = await g.beforeTool!(call as never, {
+    ...base,
+    tool: mutTool,
+    requestApproval: async () => "reject",
+  } as GuardContext);
+  assert.equal(afterReset.allow, false, "reset() clears remembered approvals");
+}
+
+// 7. End-to-end through the Agent: TDD + approval are active via options.
+{
+  const provider = new ScriptProvider();
+  provider.queue = [
+    // First tries to edit source (blocked by TDD), then writes a test, then source.
+    { text: "", toolCalls: [{ id: "a", name: "write_file", arguments: { path: "src/x.ts", content: "1" } }] },
+    { text: "", toolCalls: [{ id: "b", name: "write_file", arguments: { path: "src/x.test.ts", content: "t" } }] },
+    { text: "", toolCalls: [{ id: "c", name: "write_file", arguments: { path: "src/x.ts", content: "impl" } }] },
+    { text: "done", toolCalls: [] },
+  ];
+  const writeTool: Tool = {
+    name: "write_file",
+    description: "",
+    parameters: { type: "object", properties: {} },
+    mutating: true,
+    run: async () => ({ content: "wrote" }),
+  };
+  const agent = new Agent({
+    provider,
+    tools: [writeTool],
+    workspaceRoot: os.tmpdir(),
+    approvalPolicy: "auto",
+    systemPrompt: "s",
+    tddMode: true,
+  });
+  await agent.run("build x");
+  const results = agent.getTranscript().filter((m) => m.role === "tool");
+  assert.match(results[0]!.content, /TDD mode is on/, "first source edit blocked by TDD guard");
+  assert.match(results[1]!.content, /wrote/, "test write allowed");
+  assert.match(results[2]!.content, /wrote/, "source write allowed after test");
 }
 
 process.stdout.write("test-guardrails: ALL PASS\n");

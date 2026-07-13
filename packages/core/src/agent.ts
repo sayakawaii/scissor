@@ -1,7 +1,10 @@
 import { CONTROL_TOOL_NAMES } from "./tools/control.js";
 import { buildSystemPrompt } from "./prompt.js";
-import { isSourceFile, isTestFile } from "./tdd.js";
+import { createApprovalGuard, createTddGuard } from "./guardrails.js";
 import type {
+  ApprovalDecision,
+  ApprovalPolicy,
+  GuardContext,
   Guardrail,
   LLMProvider,
   Message,
@@ -15,10 +18,6 @@ import type {
   VerificationResult,
   VerifyFn,
 } from "./types.js";
-
-export type ApprovalPolicy = "plan-gate" | "confirm-each" | "auto";
-
-export type ApprovalDecision = "approve" | "reject" | "always";
 
 export interface PlanDecision {
   /** approved -> proceed; revise -> feedback provided; reject -> abandon. */
@@ -165,20 +164,19 @@ export class Agent {
   private compactThreshold: number;
   private summarize: SummarizeFn;
   private memoryFile?: string;
-  private tddMode: boolean;
   private subagentDepth: number;
   private maxSubagentDepth: number;
+  /**
+   * The effective guardrail chain run around every real tool call: built-in
+   * TDD (when enabled) + user guardrails + the approval guard, in that order.
+   */
   private guardrails: Guardrail[];
   /** System prompt without the dynamic scratchpad block appended. */
   private baseSystemPrompt: string;
   /** Structured working memory, pinned into the system prompt. */
   private scratchpad: Scratchpad;
-  /** TDD gate: whether a test file has been created/edited this session. */
-  private testFileTouched = false;
   /** Set when restart_self is invoked during a run. */
   private pendingRestart?: { reason: string };
-  /** Tools the user chose to "always" approve during this session. */
-  private alwaysApproved = new Set<string>();
 
   constructor(opts: AgentOptions) {
     this.provider = opts.provider;
@@ -195,10 +193,16 @@ export class Agent {
     this.compactThreshold = opts.compactThreshold ?? Math.floor(this.maxContextChars * 0.7);
     this.summarize = opts.summarize ?? ((msgs) => this.summarizeWithProvider(msgs));
     this.memoryFile = opts.memoryFile;
-    this.tddMode = opts.tddMode ?? false;
     this.subagentDepth = opts.subagentDepth ?? 0;
     this.maxSubagentDepth = opts.maxSubagentDepth ?? 1;
-    this.guardrails = opts.guardrails ?? [];
+    // Unified lifecycle-hook chain: TDD gate (if enabled) runs first, then any
+    // user-supplied guardrails (e.g. oscillation), and finally the approval
+    // gate so we only prompt for calls that passed the earlier policy checks.
+    this.guardrails = [
+      ...(opts.tddMode ? [createTddGuard()] : []),
+      ...(opts.guardrails ?? []),
+      createApprovalGuard(),
+    ];
     this.baseSystemPrompt =
       opts.systemPrompt ??
       buildSystemPrompt({
@@ -260,8 +264,7 @@ export class Agent {
   /** Reset conversation, keeping the system prompt. */
   reset(): void {
     this.messages = this.messages.slice(0, 1);
-    this.alwaysApproved.clear();
-    this.testFileTouched = false;
+    for (const guard of this.guardrails) guard.reset?.();
     this.scratchpad = {};
     this.syncSystemPrompt();
   }
@@ -583,38 +586,6 @@ export class Agent {
       return { content: `Unknown tool: ${call.name}`, isError: true };
     }
 
-    // Test-first (TDD) gate: block source edits until a test exists.
-    if (this.tddMode && (call.name === "write_file" || call.name === "edit_file")) {
-      const target = String(call.arguments.path ?? "");
-      if (target && isTestFile(target)) {
-        this.testFileTouched = true;
-      } else if (target && isSourceFile(target) && !this.testFileTouched) {
-        return {
-          content:
-            `TDD mode is on: write a test first. "${target}" is source code, but no test ` +
-            `file has been created or edited yet this session. Create a failing test (e.g. ` +
-            `a *.test.* file or a file under tests/) that specifies the desired behavior, ` +
-            `then implement "${target}" to make it pass.`,
-          isError: true,
-        };
-      }
-    }
-
-    // Guardrail pipeline (before): let guards veto the call before it runs.
-    for (const guard of this.guardrails) {
-      if (!guard.beforeTool) continue;
-      const verdict = await guard.beforeTool(call, ctx);
-      if (!verdict.allow) {
-        const blocked: ToolResult = {
-          content: `Blocked by guardrail "${guard.name}": ${verdict.reason}`,
-          isError: true,
-        };
-        callbacks.onToolStart?.(call, undefined);
-        callbacks.onToolEnd?.(call, blocked);
-        return blocked;
-      }
-    }
-
     // Compute a preview (diff / command) for mutating tools.
     let preview: ToolPreview | undefined;
     if (tool.preview) {
@@ -625,17 +596,28 @@ export class Agent {
       }
     }
 
-    // Approval gate.
-    if (tool.mutating && this.needsApproval(tool, preview)) {
-      if (callbacks.onRequestApproval && preview) {
-        const decision = await callbacks.onRequestApproval(call, preview);
-        if (decision === "reject") {
-          return {
-            content: "User rejected this action. Do not retry it; consider an alternative.",
-            isError: false,
-          };
-        }
-        if (decision === "always") this.alwaysApproved.add(tool.name);
+    // Unified guardrail pipeline (before): TDD gate, user guards (oscillation,
+    // etc.), and the approval gate all run here as lifecycle hooks. A veto
+    // blocks the call and is fed back to the model.
+    const gctx: GuardContext = {
+      tool,
+      preview,
+      ctx,
+      policy: this.approvalPolicy,
+      signal,
+      requestApproval: callbacks.onRequestApproval,
+    };
+    for (const guard of this.guardrails) {
+      if (!guard.beforeTool) continue;
+      const verdict = await guard.beforeTool(call, gctx);
+      if (!verdict.allow) {
+        const blocked: ToolResult = verdict.result ?? {
+          content: `Blocked by guardrail "${guard.name}": ${verdict.reason}`,
+          isError: true,
+        };
+        callbacks.onToolStart?.(call, preview);
+        callbacks.onToolEnd?.(call, blocked);
+        return blocked;
       }
     }
 
@@ -800,20 +782,6 @@ export class Agent {
     }
   }
 
-  private needsApproval(tool: Tool, preview?: ToolPreview): boolean {
-    if (this.alwaysApproved.has(tool.name)) return preview?.dangerous ?? false;
-    switch (this.approvalPolicy) {
-      case "auto":
-        return preview?.dangerous ?? false;
-      case "confirm-each":
-        return true;
-      case "plan-gate":
-      default:
-        // In plan-gate, the plan is approved up front; only prompt for
-        // individually dangerous actions.
-        return preview?.dangerous ?? false;
-    }
-  }
 }
 
 /** Render the current scratchpad fields as bullet lines (no header). */

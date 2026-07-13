@@ -209,6 +209,10 @@ goose is a mature, general-purpose agent; the biggest deltas to close:
   `limit` times (default 3), forcing a change of approach. Enabled by default in
   the CLI session. (`createOscillationGuard` in `packages/core/src/guardrails.ts`;
   pipeline in `handleToolCall`.)
+- [x] Unified lifecycle hooks: TDD gating and the approval prompt were refactored
+  out of the core loop into the same guardrail pipeline (`createTddGuard`,
+  `createApprovalGuard`), so all before/after-tool policy composes in one place
+  (`[TDD?] → user guards → approval`), each with an optional `reset()`.
 - Require explicit human approval for self-edits by default (plan-gate already
   helps; make it a hard gate for `restart_self`).
 - Persist a self-update changelog across generations.
