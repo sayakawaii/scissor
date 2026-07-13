@@ -7,6 +7,13 @@ import path from "node:path";
  * verification/compaction/sub-agent events can be inspected after the fact.
  * Opt-in (see --trace / SCISSOR_TRACE); writes are best-effort and never throw.
  */
+/** A single trace record: a timestamp, an event type, and arbitrary payload. */
+export interface TraceEvent {
+  ts: string;
+  type: string;
+  [key: string]: unknown;
+}
+
 export interface Tracer {
   readonly filePath: string;
   /** Append an event of the given type with an optional payload. */

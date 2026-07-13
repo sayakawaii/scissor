@@ -226,6 +226,20 @@ scissor --trace "refactor the parser"
 cat ~/.scissor/traces/*.jsonl | jq 'select(.type=="tool")'
 ```
 
+### Token / cost report
+
+`scissor trace [id|path]` aggregates a trace into a per-session **token and cost
+report** — total and per-model token counts, an estimated USD cost (using an
+approximate built-in price table; models without a price are counted but flagged
+`n/a`), the cheap/strong routing split, and tool call/error/duration stats. With
+no argument it uses the most recent trace.
+
+```bash
+scissor trace              # report on the latest traced session
+scissor trace --list       # list available traces
+scissor trace <id> --json  # machine-readable report
+```
+
 ## Self-iteration (experimental)
 
 scissor can modify and reload its **own** source code under a supervisor that

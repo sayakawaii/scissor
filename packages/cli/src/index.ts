@@ -166,6 +166,16 @@ program
 program.addCommand(buildMcpCommand());
 
 program
+  .command("trace [idOrPath]")
+  .description("aggregate a session trace into a token/cost report (default: latest)")
+  .option("--json", "print the report as JSON")
+  .option("--list", "list available trace files and exit")
+  .action(async (target: string | undefined, opts: { json?: boolean; list?: boolean }) => {
+    const { runTraceCommand } = await import("./commands/trace.js");
+    process.exit(await runTraceCommand(target, opts));
+  });
+
+program
   .command("supervise")
   .description(
     "run scissor under a supervisor so it can safely edit and reload its own code",

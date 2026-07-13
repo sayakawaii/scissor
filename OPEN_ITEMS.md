@@ -130,8 +130,10 @@ Long-term memory is `SCISSOR_MEMORY.md` (durable facts) + saved sessions. Gaps:
   `~/.scissor/traces/<id>.jsonl` for observability. (`packages/cli/src/trace.ts`)
 - Retries with backoff on 429/5xx and transient network errors.
 - Streaming reasoning display for reasoning models (e.g. deepseek-reasoner).
-- Token accounting + cost estimate per turn/session (the `usage` trace events are
-  the raw material; still need aggregation + a cost table).
+- [x] Token accounting + cost estimate per turn/session: `scissor trace`
+  aggregates a session's trace into per-model token totals + estimated USD cost
+  (approximate built-in price table), routing split, and tool stats.
+  (`packages/cli/src/trace-report.ts`, `commands/trace.ts`)
 - Learned/data-driven routing: replace the heuristic score with a tiny trained
   classifier over past turns (à la OpenSquilla's SquillaRouter), keeping the
   heuristic as the cold-start fallback.
