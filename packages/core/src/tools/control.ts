@@ -10,6 +10,7 @@ export const CONTROL_TOOL_NAMES = [
   "present_plan",
   "restart_self",
   "update_scratchpad",
+  "spawn_subagent",
 ] as const;
 
 export const askUserTool: Tool = {
@@ -84,6 +85,29 @@ export const updateScratchpadTool: Tool = {
   async run() {
     return {
       content: "update_scratchpad was not intercepted by the agent loop.",
+      isError: true,
+    };
+  },
+};
+
+export const spawnSubagentTool: Tool = {
+  name: "spawn_subagent",
+  description:
+    "Delegate a focused, self-contained sub-task to a fresh sub-agent that has its own clean context and the same file/search/shell tools, running in the same workspace. Use it for large or noisy sub-tasks (e.g. 'investigate how X works across the codebase and report back', or 'implement and test module Y') so your own context stays focused — only the sub-agent's final summary comes back to you. The sub-agent cannot see this conversation, so provide a complete, standalone task description with all needed context. It runs autonomously (it cannot ask the user) and returns a concise summary.",
+  parameters: {
+    type: "object",
+    properties: {
+      task: {
+        type: "string",
+        description:
+          "A complete, standalone description of the sub-task, including all context the sub-agent needs and what to report back.",
+      },
+    },
+    required: ["task"],
+  },
+  async run() {
+    return {
+      content: "spawn_subagent was not intercepted by the agent loop.",
       isError: true,
     };
   },

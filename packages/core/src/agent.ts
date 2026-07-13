@@ -46,6 +46,10 @@ export interface AgentCallbacks {
   onVerifyResult?(result: VerificationResult): void;
   /** Conversation history was compacted into a summary. */
   onCompact?(info: CompactionInfo): void;
+  /** A sub-agent was spawned to handle a delegated task. */
+  onSubagentStart?(task: string, depth: number): void;
+  /** A sub-agent finished; summary is its final message. */
+  onSubagentEnd?(summary: string, depth: number): void;
 }
 
 export interface CompactionInfo {
@@ -64,6 +68,14 @@ export type SummarizeFn = (messages: Message[]) => Promise<string>;
 
 const SUMMARY_MARKER = "[Summary of earlier conversation]";
 const COMPACT_REQUEST = "(Earlier conversation was summarized to save context.)";
+
+const SUBAGENT_PREAMBLE =
+  "\n\n[Sub-agent mode]\n" +
+  "You are a focused sub-agent handling ONE delegated sub-task. You cannot see " +
+  "the parent conversation, so rely only on the task description and the " +
+  "workspace. Work autonomously — you cannot ask the user. When finished, end " +
+  "your final message with a concise summary of what you did, which files you " +
+  "changed, and any findings the parent agent needs to continue.";
 
 export interface AgentOptions {
   provider: LLMProvider;
@@ -113,6 +125,10 @@ export interface AgentOptions {
    * system prompt so it survives compaction and restarts.
    */
   initialScratchpad?: Scratchpad;
+  /** Nesting depth of this agent (0 = top-level; children are 1, ...). Internal. */
+  subagentDepth?: number;
+  /** Max sub-agent nesting depth allowed (default 1: children cannot spawn). */
+  maxSubagentDepth?: number;
 }
 
 export interface RunResult {
@@ -144,6 +160,8 @@ export class Agent {
   private summarize: SummarizeFn;
   private memoryFile?: string;
   private tddMode: boolean;
+  private subagentDepth: number;
+  private maxSubagentDepth: number;
   /** System prompt without the dynamic scratchpad block appended. */
   private baseSystemPrompt: string;
   /** Structured working memory, pinned into the system prompt. */
@@ -171,6 +189,8 @@ export class Agent {
     this.summarize = opts.summarize ?? ((msgs) => this.summarizeWithProvider(msgs));
     this.memoryFile = opts.memoryFile;
     this.tddMode = opts.tddMode ?? false;
+    this.subagentDepth = opts.subagentDepth ?? 0;
+    this.maxSubagentDepth = opts.maxSubagentDepth ?? 1;
     this.baseSystemPrompt =
       opts.systemPrompt ??
       buildSystemPrompt({
@@ -335,6 +355,10 @@ export class Agent {
           const p = call.arguments.path;
           if (typeof p === "string") editedFiles.add(p);
         }
+        // A sub-agent may have edited files; verify after delegation too.
+        if (!toolResult.isError && call.name === "spawn_subagent") {
+          editsSinceVerify = true;
+        }
         this.messages.push({
           role: "tool",
           content: toolResult.content,
@@ -377,6 +401,61 @@ export class Agent {
     };
     const call: ToolCall = { id: `manual-${Date.now()}`, name, arguments: args };
     return this.handleToolCall(call, ctx, callbacks, signal);
+  }
+
+  /**
+   * Run a delegated sub-task in a fresh child Agent with its own clean context
+   * but the same provider, workspace, and worker tools. Only the child's final
+   * summary is returned to the parent, keeping the parent's context focused.
+   */
+  private async runSubagent(
+    task: string,
+    callbacks: AgentCallbacks,
+    signal?: AbortSignal,
+  ): Promise<ToolResult> {
+    if (this.subagentDepth >= this.maxSubagentDepth) {
+      return {
+        content:
+          "Sub-agents cannot spawn further sub-agents. Do this sub-task yourself.",
+        isError: true,
+      };
+    }
+    // Worker tools: drop control tools (no plans/questions/restart/nested spawn).
+    const controlNames = CONTROL_TOOL_NAMES as readonly string[];
+    const workerTools = this.tools.filter((t) => !controlNames.includes(t.name));
+
+    const child = new Agent({
+      provider: this.provider,
+      tools: workerTools,
+      workspaceRoot: this.workspaceRoot,
+      approvalPolicy: this.approvalPolicy,
+      protectedPaths: this.protectedPaths,
+      systemPrompt: this.baseSystemPrompt + SUBAGENT_PREAMBLE,
+      maxTurns: this.maxTurns,
+      maxContextChars: this.maxContextChars,
+      autoCompact: this.autoCompact,
+      summarize: this.summarize,
+      memoryFile: this.memoryFile,
+      subagentDepth: this.subagentDepth + 1,
+      maxSubagentDepth: this.maxSubagentDepth,
+    });
+
+    callbacks.onSubagentStart?.(task, this.subagentDepth + 1);
+    let res;
+    try {
+      res = await child.run(task, callbacks, signal);
+    } catch (err) {
+      return { content: `Sub-agent failed: ${(err as Error).message}`, isError: true };
+    }
+    callbacks.onSubagentEnd?.(res.finalText, this.subagentDepth + 1);
+    if (res.aborted) {
+      return { content: "Sub-agent was interrupted before finishing.", isError: true };
+    }
+    return {
+      content:
+        `Sub-agent finished (${res.turns} turns). Summary:\n` +
+        (res.finalText.trim() || "(the sub-agent returned no summary)"),
+    };
   }
 
   private async handleToolCall(
@@ -424,6 +503,12 @@ export class Agent {
       this.applyScratchpadUpdate(call.arguments);
       const state = renderScratchpadState(this.scratchpad);
       return { content: `Working memory updated.\n${state}` };
+    }
+
+    if (call.name === "spawn_subagent") {
+      const task = String(call.arguments.task ?? "").trim();
+      if (!task) return { content: "Error: 'task' is required.", isError: true };
+      return this.runSubagent(task, callbacks, signal);
     }
 
     if (call.name === "restart_self") {

@@ -63,7 +63,11 @@ Current trimming just drops old rounds. Better:
   (`packages/core/src/tools/remember.ts`)
 - [ ] Auto-propose long-term memory additions (currently the agent must choose to
   call `remember`); detect durable facts and suggest saving them.
-- [ ] Sub-agents for large tasks (spawn a focused child agent, return a summary).
+- [x] Sub-agents for large tasks: the `spawn_subagent` tool delegates a
+  self-contained sub-task to a fresh child agent (own clean context, same
+  workspace + worker tools) and returns only its summary; depth-guarded so
+  children can't spawn children. (`runSubagent` in `packages/core/src/agent.ts`,
+  `spawn_subagent` in `tools/control.ts`.)
 
 ### 4a. Short-term (working) memory handling — backlog
 

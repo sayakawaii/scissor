@@ -266,6 +266,21 @@ export class TurnRenderer {
     this.streamedThisTurn = false;
   };
 
+  onSubagentStart = (task: string, depth: number): void => {
+    this.ensureNewline();
+    const preview = task.length > 80 ? task.slice(0, 80) + "\u2026" : task;
+    process.stdout.write(
+      theme.info(`\u21b3 sub-agent (depth ${depth}) started: `) + theme.dim(preview) + "\n",
+    );
+    this.streamedThisTurn = false;
+  };
+
+  onSubagentEnd = (_summary: string, depth: number): void => {
+    this.ensureNewline();
+    process.stdout.write(theme.info(`\u21b3 sub-agent (depth ${depth}) finished`) + "\n");
+    this.streamedThisTurn = false;
+  };
+
   finish(): void {
     this.ensureNewline();
   }
@@ -284,6 +299,8 @@ export function makeCallbacks(renderer: TurnRenderer) {
     onVerifyStart: renderer.onVerifyStart,
     onVerifyResult: renderer.onVerifyResult,
     onCompact: renderer.onCompact,
+    onSubagentStart: renderer.onSubagentStart,
+    onSubagentEnd: renderer.onSubagentEnd,
   };
 }
 

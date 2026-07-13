@@ -3,6 +3,7 @@ import {
   askUserTool,
   presentPlanTool,
   restartSelfTool,
+  spawnSubagentTool,
   updateScratchpadTool,
 } from "./control.js";
 import { readFileTool } from "./read-file.js";
@@ -23,6 +24,7 @@ export {
   presentPlanTool,
   restartSelfTool,
   updateScratchpadTool,
+  spawnSubagentTool,
   CONTROL_TOOL_NAMES,
 } from "./control.js";
 export { resolveInWorkspace, displayPath, isProtected } from "./paths.js";
@@ -44,6 +46,7 @@ export function defaultTools(opts: ToolSetOptions = {}): Tool[] {
     runShellTool,
     rememberTool,
     updateScratchpadTool,
+    spawnSubagentTool,
     askUserTool,
     presentPlanTool,
   ];

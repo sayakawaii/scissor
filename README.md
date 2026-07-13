@@ -172,6 +172,20 @@ recall across many sessions), an **optional** embedding index is the planned nex
 step — see the memory backlog in `OPEN_ITEMS.md`. It stays optional precisely so
 the lightweight default keeps working with no extra infrastructure.
 
+## Sub-agents (delegation)
+
+For large or noisy sub-tasks the agent can call `spawn_subagent` to delegate to a
+**fresh child agent** with its own clean context but the same workspace and
+file/search/shell tools. The child runs autonomously (it can't ask the user) and
+only its concise **summary** returns to the parent — so the parent's context
+stays focused instead of filling up with, say, a wide codebase investigation.
+
+- Child edits happen in the same workspace, so they persist; the verification
+  loop still runs after a delegation.
+- Depth is guarded (`maxSubagentDepth`, default 1): a sub-agent cannot spawn
+  further sub-agents, preventing runaway recursion.
+- Sub-agent start/finish is shown inline in the REPL.
+
 ## Self-iteration (experimental)
 
 scissor can modify and reload its **own** source code under a supervisor that
