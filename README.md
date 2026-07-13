@@ -60,7 +60,7 @@ Options:
 - `--router` — route each turn to a cheap/strong model tier by difficulty
 - `--tdd` — enforce test-first coding (block source edits until a test exists)
 
-REPL slash commands: `/help`, `/reset`, `/compact`, `/remember <fact>`, `/info`, `/exit`.
+REPL slash commands: `/help`, `/reset`, `/compact`, `/scratchpad`, `/remember <fact>`, `/info`, `/exit`.
 
 ## Codebase retrieval
 
@@ -126,22 +126,51 @@ turn:
 - Pass an `edits` array to make several changes to one file atomically.
 - On a miss, the error points at the closest matching line so the retry is cheap.
 
-## Sessions & memory
+## Memory model
 
-Every REPL/one-shot run is saved to `~/.scissor/sessions/<id>.json` (transcript +
-metadata). List them with `scissor sessions` and continue one with
-`scissor --resume <id>`. A `SCISSOR_MEMORY.md` file in the workspace, if present,
-is injected into the system prompt as long-term memory.
+scissor has both short-term and long-term memory, deliberately built from
+**local, zero-dependency primitives** — no Redis, no vector database. Those are
+scaling tools (Redis for sharing session state across many server processes; RAG
+for retrieving from a corpus too large to fit in context), and a single-user
+local agent has neither problem. The right-sized equivalents below do the same
+job without the operational weight.
 
-**Long-term memory:** the agent can save durable facts (conventions, key
-commands, gotchas) to `SCISSOR_MEMORY.md` via the `remember` tool, or you can add
-one yourself with `/remember <fact>`. These are loaded into context in future
-sessions.
+### Short-term (working) memory
 
-**Context compaction:** when a conversation grows past a threshold, scissor
-summarizes the oldest rounds into a rolling "summary of earlier conversation"
-note (via the LLM) instead of dropping them, so long sessions keep their context.
-Trigger it manually with `/compact`.
+The live conversation the model sees each turn, managed in three layers:
+
+- **Transcript** — the full message history for the current session.
+- **Structured scratchpad** — a small, agent-maintained snapshot of task state
+  (goal, next step, last error, files in play, notes), updated via the
+  `update_scratchpad` tool and **pinned into the system prompt**. Because it
+  lives in the system message, it survives context compaction and restarts
+  *verbatim* even when older messages are dropped — so the agent doesn't lose
+  the thread on long tasks. View it with `/scratchpad`.
+- **Compaction & trim** — when the conversation grows past a threshold, the
+  oldest rounds are summarized into a rolling "summary of earlier conversation"
+  note (via the LLM) instead of being discarded; a hard trim of oldest whole
+  rounds is the fallback. The rolling summary and the scratchpad are both
+  protected from trimming. Trigger compaction manually with `/compact`.
+
+Short-term memory is persisted per session (transcript + scratchpad) to
+`~/.scissor/sessions/<id>.json`, so `--resume` (and self-update restarts) carry
+it over. List sessions with `scissor sessions`.
+
+### Long-term (persistent) memory
+
+- **`SCISSOR_MEMORY.md`** — durable facts (conventions, key commands, gotchas)
+  the agent saves via the `remember` tool (or you, via `/remember <fact>`). If
+  present in the workspace, it is injected into the system prompt at the start of
+  every future session.
+- **Session archive** — every past session (goal + transcript + scratchpad) is
+  stored under `~/.scissor/sessions/` and can be resumed.
+- **Codebase retrieval** — the repo map + `retrieve` tool act as memory *of the
+  codebase* (see [Codebase retrieval](#codebase-retrieval)).
+
+When these outgrow simple whole-file injection (a large memory file, or semantic
+recall across many sessions), an **optional** embedding index is the planned next
+step — see the memory backlog in `OPEN_ITEMS.md`. It stays optional precisely so
+the lightweight default keeps working with no extra infrastructure.
 
 ## Self-iteration (experimental)
 

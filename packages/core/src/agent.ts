@@ -4,6 +4,7 @@ import { isSourceFile, isTestFile } from "./tdd.js";
 import type {
   LLMProvider,
   Message,
+  Scratchpad,
   Tool,
   ToolCall,
   ToolContext,
@@ -106,6 +107,12 @@ export interface AgentOptions {
    * edited this session, nudging a red-green-refactor workflow.
    */
   tddMode?: boolean;
+  /**
+   * Initial working-memory scratchpad (e.g. restored from a resumed session).
+   * The agent maintains it via the update_scratchpad tool and pins it into the
+   * system prompt so it survives compaction and restarts.
+   */
+  initialScratchpad?: Scratchpad;
 }
 
 export interface RunResult {
@@ -137,6 +144,10 @@ export class Agent {
   private summarize: SummarizeFn;
   private memoryFile?: string;
   private tddMode: boolean;
+  /** System prompt without the dynamic scratchpad block appended. */
+  private baseSystemPrompt: string;
+  /** Structured working memory, pinned into the system prompt. */
+  private scratchpad: Scratchpad;
   /** TDD gate: whether a test file has been created/edited this session. */
   private testFileTouched = false;
   /** Set when restart_self is invoked during a run. */
@@ -160,17 +171,52 @@ export class Agent {
     this.summarize = opts.summarize ?? ((msgs) => this.summarizeWithProvider(msgs));
     this.memoryFile = opts.memoryFile;
     this.tddMode = opts.tddMode ?? false;
-    const system =
+    this.baseSystemPrompt =
       opts.systemPrompt ??
       buildSystemPrompt({
         workspaceRoot: this.workspaceRoot,
         platform: process.platform,
         approvalPolicy: this.approvalPolicy,
       });
-    this.messages = [{ role: "system", content: system }];
+    this.scratchpad = opts.initialScratchpad ? { ...opts.initialScratchpad } : {};
+    this.messages = [{ role: "system", content: this.renderSystemPrompt() }];
     if (opts.initialMessages?.length) {
       this.messages.push(...opts.initialMessages.filter((m) => m.role !== "system"));
     }
+  }
+
+  /** System prompt = base prompt + the pinned scratchpad block (if enabled). */
+  private renderSystemPrompt(): string {
+    if (!this.toolMap.has("update_scratchpad")) return this.baseSystemPrompt;
+    return this.baseSystemPrompt + renderScratchpadBlock(this.scratchpad);
+  }
+
+  /** Re-render messages[0] after the scratchpad changes. */
+  private syncSystemPrompt(): void {
+    if (this.messages[0]?.role === "system") {
+      this.messages[0].content = this.renderSystemPrompt();
+    }
+  }
+
+  /** Merge a partial scratchpad update (from the update_scratchpad tool). */
+  private applyScratchpadUpdate(args: Record<string, unknown>): void {
+    const s = this.scratchpad;
+    if (typeof args.goal === "string") s.goal = args.goal.trim() || undefined;
+    if (typeof args.next_step === "string") s.nextStep = args.next_step.trim() || undefined;
+    if (typeof args.last_error === "string") s.lastError = args.last_error.trim() || undefined;
+    if (Array.isArray(args.files)) {
+      s.files = (args.files as unknown[]).map((f) => String(f).trim()).filter(Boolean);
+    }
+    if (args.clear_notes === true) s.notes = [];
+    if (typeof args.note === "string" && args.note.trim()) {
+      (s.notes ??= []).push(args.note.trim());
+    }
+    this.syncSystemPrompt();
+  }
+
+  /** Current working-memory scratchpad (for persistence). */
+  getScratchpad(): Scratchpad {
+    return this.scratchpad;
   }
 
   /** Full conversation history (including the system prompt). */
@@ -188,6 +234,8 @@ export class Agent {
     this.messages = this.messages.slice(0, 1);
     this.alwaysApproved.clear();
     this.testFileTouched = false;
+    this.scratchpad = {};
+    this.syncSystemPrompt();
   }
 
   /** Run one user request to completion (may span many model turns). */
@@ -370,6 +418,12 @@ export class Agent {
       return {
         content: "User rejected the plan. Stop and ask how they would like to proceed.",
       };
+    }
+
+    if (call.name === "update_scratchpad") {
+      this.applyScratchpadUpdate(call.arguments);
+      const state = renderScratchpadState(this.scratchpad);
+      return { content: `Working memory updated.\n${state}` };
     }
 
     if (call.name === "restart_self") {
@@ -599,6 +653,33 @@ export class Agent {
         return preview?.dangerous ?? false;
     }
   }
+}
+
+/** Render the current scratchpad fields as bullet lines (no header). */
+function renderScratchpadState(s: Scratchpad): string {
+  const lines: string[] = [];
+  if (s.goal) lines.push(`- Goal: ${s.goal}`);
+  if (s.nextStep) lines.push(`- Next step: ${s.nextStep}`);
+  if (s.lastError) lines.push(`- Last error: ${s.lastError}`);
+  if (s.files?.length) lines.push(`- Files in play: ${s.files.join(", ")}`);
+  if (s.notes?.length) {
+    lines.push("- Notes:");
+    for (const n of s.notes) lines.push(`  - ${n}`);
+  }
+  return lines.length > 0 ? lines.join("\n") : "- (empty)";
+}
+
+/** The scratchpad block appended to the system prompt (with guidance header). */
+function renderScratchpadBlock(s: Scratchpad): string {
+  return (
+    "\n\n[Working memory / scratchpad]\n" +
+    "You maintain this via the update_scratchpad tool. It is pinned here in the " +
+    "system prompt, so it survives context compaction and restarts even when " +
+    "older messages are dropped. During multi-step tasks, keep it current: the " +
+    "goal, the next concrete step, the last unresolved error, and the files in " +
+    "play. Clear the last error once resolved.\n" +
+    renderScratchpadState(s)
+  );
 }
 
 export { CONTROL_TOOL_NAMES };

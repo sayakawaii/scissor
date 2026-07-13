@@ -71,10 +71,14 @@ The "short-term" memory is the live conversation window the model sees each turn
 Today it is: full transcript → auto-compaction past a threshold → hard-trim of
 oldest rounds. Improvements to pursue:
 
-- [ ] Structured scratchpad: a small, always-injected "working set" (current
-  goal, files in play, last error, next step) maintained separately from the raw
-  transcript, so key state survives compaction verbatim instead of being
-  paraphrased into the summary.
+- [x] Structured scratchpad: a small, always-injected "working set" (current
+  goal, files in play, last error, next step, notes) maintained separately from
+  the raw transcript, so key state survives compaction verbatim instead of being
+  paraphrased into the summary. Maintained via the `update_scratchpad` tool,
+  pinned into the system prompt, persisted per session (survives `--resume` and
+  self-update restarts), viewable with `/scratchpad`. (`Scratchpad` in
+  `packages/core/src/types.ts`, `update_scratchpad` in `tools/control.ts`,
+  render/merge in `Agent`.)
 - [ ] Token-based budgeting instead of character counts (per-provider tokenizer),
   and a per-turn context budget so retrieval/tool output can't blow the window.
 - [ ] Relevance-aware trimming: keep the messages most relevant to the current

@@ -1,5 +1,10 @@
 import type { Tool } from "../types.js";
-import { askUserTool, presentPlanTool, restartSelfTool } from "./control.js";
+import {
+  askUserTool,
+  presentPlanTool,
+  restartSelfTool,
+  updateScratchpadTool,
+} from "./control.js";
 import { readFileTool } from "./read-file.js";
 import { rememberTool } from "./remember.js";
 import { retrieveTool } from "./retrieve.js";
@@ -17,6 +22,7 @@ export {
   askUserTool,
   presentPlanTool,
   restartSelfTool,
+  updateScratchpadTool,
   CONTROL_TOOL_NAMES,
 } from "./control.js";
 export { resolveInWorkspace, displayPath, isProtected } from "./paths.js";
@@ -37,6 +43,7 @@ export function defaultTools(opts: ToolSetOptions = {}): Tool[] {
     editFileTool,
     runShellTool,
     rememberTool,
+    updateScratchpadTool,
     askUserTool,
     presentPlanTool,
   ];

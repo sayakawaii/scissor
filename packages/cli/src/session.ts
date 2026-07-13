@@ -173,6 +173,7 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     verify,
     memoryFile: MEMORY_FILENAME,
     tddMode: tdd,
+    initialScratchpad: opts.resume?.scratchpad,
   });
 
   const now = new Date().toISOString();
@@ -199,6 +200,7 @@ export async function persistSession(session: Session): Promise<void> {
   session.data.provider = session.providerId;
   session.data.model = session.model;
   session.data.workspaceRoot = session.workspaceRoot;
+  session.data.scratchpad = session.agent.getScratchpad();
   await saveSession(session.data);
 }
 

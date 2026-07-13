@@ -28,6 +28,24 @@ export interface Message {
   name?: string;
 }
 
+/**
+ * Structured working memory ("scratchpad"): a small, agent-maintained snapshot
+ * of the current task state. It is pinned into the system prompt so it survives
+ * context compaction and restarts verbatim (unlike the raw transcript).
+ */
+export interface Scratchpad {
+  /** The task the agent is currently working toward. */
+  goal?: string;
+  /** The next concrete step. */
+  nextStep?: string;
+  /** The most recent unresolved error, if any. */
+  lastError?: string;
+  /** Files currently in play (workspace-relative). */
+  files?: string[];
+  /** Freeform working notes. */
+  notes?: string[];
+}
+
 /** JSON-schema-ish parameter definition for a tool. */
 export interface ToolParametersSchema {
   type: "object";

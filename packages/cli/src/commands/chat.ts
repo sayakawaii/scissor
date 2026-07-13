@@ -217,6 +217,25 @@ async function handleSlash(cmd: string, session: Session): Promise<"exit" | "con
       await persistSession(session).catch(() => {});
       return "continue";
     }
+    case "scratchpad":
+    case "sp": {
+      const s = session.agent.getScratchpad();
+      const lines: string[] = [];
+      if (s.goal) lines.push(`  goal:      ${s.goal}`);
+      if (s.nextStep) lines.push(`  next step: ${s.nextStep}`);
+      if (s.lastError) lines.push(`  last error:${s.lastError}`);
+      if (s.files?.length) lines.push(`  files:     ${s.files.join(", ")}`);
+      if (s.notes?.length) {
+        lines.push("  notes:");
+        for (const n of s.notes) lines.push(`    - ${n}`);
+      }
+      process.stdout.write(
+        lines.length > 0
+          ? theme.bold("Working memory:\n") + theme.dim(lines.join("\n")) + "\n"
+          : theme.dim("Scratchpad is empty.\n"),
+      );
+      return "continue";
+    }
     case "remember": {
       const fact = cmd.slice(1).replace(/^remember\s*/, "").trim();
       if (!fact) {
@@ -236,6 +255,7 @@ async function handleSlash(cmd: string, session: Session): Promise<"exit" | "con
           "  /help              show this help",
           "  /reset             clear conversation history",
           "  /compact           summarize the conversation so far to save context",
+          "  /scratchpad        show the agent's working-memory scratchpad",
           "  /remember <fact>   save a durable fact to long-term memory",
           "  /info              show provider and workspace info",
           "  /exit              quit",

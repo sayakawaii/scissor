@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { getConfigDir } from "./config.js";
 import type { ApprovalPolicy } from "./agent.js";
-import type { Message, ProviderId } from "./types.js";
+import type { Message, ProviderId, Scratchpad } from "./types.js";
 
 export const SESSION_FORMAT_VERSION = 1;
 
@@ -24,6 +24,8 @@ export interface SessionData {
   lastCheckpoint?: string;
   /** Conversation transcript, excluding the system prompt. */
   messages: Message[];
+  /** Structured working memory, restored on resume so state survives restarts. */
+  scratchpad?: Scratchpad;
 }
 
 export function getSessionsDir(): string {
