@@ -79,6 +79,14 @@ Current trimming just drops old rounds. Better:
   workspace + worker tools) and returns only its summary; depth-guarded so
   children can't spawn children. (`runSubagent` in `packages/core/src/agent.ts`,
   `spawn_subagent` in `tools/control.ts`.)
+- [x] Parallel multi-agent fan-out (MAS): `spawn_subagents` runs several
+  INDEPENDENT sub-tasks as concurrent child agents and fans in their summaries
+  (map-reduce), capped at 5 and depth-guarded. Tasks must touch disjoint files
+  (shared workspace). (`runSubagentsParallel`/`runOneSubagent` in
+  `packages/core/src/agent.ts`; `scripts/test-subagent.mts` cases 4–6.)
+- [ ] Richer MAS: role-based orchestration (planner / worker / critic) and a
+  shared scratchpad/blackboard beyond the filesystem; a Reflexion-style critic
+  agent would also upgrade the reflection loop (§9).
 - [x] Parallel read-only tool execution: a turn's calls run concurrently **only
   when they are all read-only**; any mutating/control call makes the whole turn
   sequential in call order, so a read-only call (e.g. `diagnostics`, `read_file`)

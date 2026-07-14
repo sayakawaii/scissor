@@ -69,6 +69,9 @@ export type SummarizeFn = (messages: Message[]) => Promise<string>;
 const SUMMARY_MARKER = "[Summary of earlier conversation]";
 const COMPACT_REQUEST = "(Earlier conversation was summarized to save context.)";
 
+/** Upper bound on how many sub-agents may run concurrently in one fan-out. */
+const MAX_PARALLEL_SUBAGENTS = 5;
+
 const SUBAGENT_PREAMBLE =
   "\n\n[Sub-agent mode]\n" +
   "You are a focused sub-agent handling ONE delegated sub-task. You cannot see " +
@@ -459,28 +462,12 @@ export class Agent {
     return !!tool && tool.mutating !== true;
   }
 
-  /**
-   * Run a delegated sub-task in a fresh child Agent with its own clean context
-   * but the same provider, workspace, and worker tools. Only the child's final
-   * summary is returned to the parent, keeping the parent's context focused.
-   */
-  private async runSubagent(
-    task: string,
-    callbacks: AgentCallbacks,
-    signal?: AbortSignal,
-  ): Promise<ToolResult> {
-    if (this.subagentDepth >= this.maxSubagentDepth) {
-      return {
-        content:
-          "Sub-agents cannot spawn further sub-agents. Do this sub-task yourself.",
-        isError: true,
-      };
-    }
+  /** Build a fresh child Agent that shares this agent's provider/workspace. */
+  private spawnChild(): Agent {
     // Worker tools: drop control tools (no plans/questions/restart/nested spawn).
     const controlNames = CONTROL_TOOL_NAMES as readonly string[];
     const workerTools = this.tools.filter((t) => !controlNames.includes(t.name));
-
-    const child = new Agent({
+    return new Agent({
       provider: this.provider,
       tools: workerTools,
       workspaceRoot: this.workspaceRoot,
@@ -496,22 +483,99 @@ export class Agent {
       maxSubagentDepth: this.maxSubagentDepth,
       guardrails: this.guardrails,
     });
+  }
 
+  /** Run one delegated task in a child agent and return a structured outcome. */
+  private async runOneSubagent(
+    task: string,
+    callbacks: AgentCallbacks,
+    signal?: AbortSignal,
+  ): Promise<{ ok: boolean; aborted: boolean; turns: number; summary: string }> {
+    const child = this.spawnChild();
     callbacks.onSubagentStart?.(task, this.subagentDepth + 1);
-    let res;
     try {
-      res = await child.run(task, callbacks, signal);
+      const res = await child.run(task, callbacks, signal);
+      callbacks.onSubagentEnd?.(res.finalText, this.subagentDepth + 1);
+      if (res.aborted) {
+        return { ok: false, aborted: true, turns: res.turns, summary: "interrupted before finishing" };
+      }
+      return {
+        ok: true,
+        aborted: false,
+        turns: res.turns,
+        summary: res.finalText.trim() || "(the sub-agent returned no summary)",
+      };
     } catch (err) {
-      return { content: `Sub-agent failed: ${(err as Error).message}`, isError: true };
+      callbacks.onSubagentEnd?.("", this.subagentDepth + 1);
+      return { ok: false, aborted: false, turns: 0, summary: `failed: ${(err as Error).message}` };
     }
-    callbacks.onSubagentEnd?.(res.finalText, this.subagentDepth + 1);
-    if (res.aborted) {
-      return { content: "Sub-agent was interrupted before finishing.", isError: true };
+  }
+
+  /**
+   * Run a delegated sub-task in a fresh child Agent with its own clean context
+   * but the same provider, workspace, and worker tools. Only the child's final
+   * summary is returned to the parent, keeping the parent's context focused.
+   */
+  private async runSubagent(
+    task: string,
+    callbacks: AgentCallbacks,
+    signal?: AbortSignal,
+  ): Promise<ToolResult> {
+    if (this.subagentDepth >= this.maxSubagentDepth) {
+      return {
+        content: "Sub-agents cannot spawn further sub-agents. Do this sub-task yourself.",
+        isError: true,
+      };
     }
+    const r = await this.runOneSubagent(task, callbacks, signal);
+    if (r.aborted) return { content: "Sub-agent was interrupted before finishing.", isError: true };
+    if (!r.ok) return { content: `Sub-agent ${r.summary}`, isError: true };
+    return { content: `Sub-agent finished (${r.turns} turns). Summary:\n${r.summary}` };
+  }
+
+  /**
+   * Fan out several independent sub-tasks to child agents that run CONCURRENTLY,
+   * then fan in their summaries (map-reduce style). Use only for tasks that don't
+   * touch the same files, since children share the workspace. The parent only
+   * sees the aggregated summaries, keeping its context focused.
+   */
+  private async runSubagentsParallel(
+    tasks: string[],
+    callbacks: AgentCallbacks,
+    signal?: AbortSignal,
+  ): Promise<ToolResult> {
+    if (this.subagentDepth >= this.maxSubagentDepth) {
+      return {
+        content: "Sub-agents cannot spawn further sub-agents. Do these sub-tasks yourself.",
+        isError: true,
+      };
+    }
+    if (tasks.length < 2) {
+      return {
+        content: "spawn_subagents needs at least 2 tasks; use spawn_subagent for a single task.",
+        isError: true,
+      };
+    }
+    if (tasks.length > MAX_PARALLEL_SUBAGENTS) {
+      return {
+        content: `Too many parallel sub-agents (${tasks.length}); the max is ${MAX_PARALLEL_SUBAGENTS}. Batch the work into fewer tasks.`,
+        isError: true,
+      };
+    }
+
+    const outcomes = await Promise.all(
+      tasks.map((task) => this.runOneSubagent(task, callbacks, signal)),
+    );
+
+    const sections = outcomes.map((r, i) => {
+      const status = r.aborted ? "INTERRUPTED" : r.ok ? `ok, ${r.turns} turns` : "FAILED";
+      return `### Sub-agent ${i + 1} (${status})\nTask: ${tasks[i]}\n${r.summary}`;
+    });
+    const succeeded = outcomes.filter((r) => r.ok).length;
+    const header = `Ran ${tasks.length} sub-agents in parallel; ${succeeded}/${tasks.length} succeeded.`;
     return {
-      content:
-        `Sub-agent finished (${res.turns} turns). Summary:\n` +
-        (res.finalText.trim() || "(the sub-agent returned no summary)"),
+      content: `${header}\n\n${sections.join("\n\n")}`,
+      isError: succeeded === 0,
     };
   }
 
@@ -567,6 +631,16 @@ export class Agent {
       const task = String(call.arguments.task ?? "").trim();
       if (!task) return { content: "Error: 'task' is required.", isError: true };
       return this.runSubagent(task, callbacks, signal);
+    }
+
+    if (call.name === "spawn_subagents") {
+      const tasks = Array.isArray(call.arguments.tasks)
+        ? (call.arguments.tasks as unknown[]).map((t) => String(t).trim()).filter(Boolean)
+        : [];
+      if (tasks.length === 0) {
+        return { content: "Error: 'tasks' must be a non-empty array of task strings.", isError: true };
+      }
+      return this.runSubagentsParallel(tasks, callbacks, signal);
     }
 
     if (call.name === "restart_self") {

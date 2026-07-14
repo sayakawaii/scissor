@@ -4,6 +4,7 @@ import {
   presentPlanTool,
   restartSelfTool,
   spawnSubagentTool,
+  spawnSubagentsTool,
   updateScratchpadTool,
 } from "./control.js";
 import { diagnosticsTool } from "./diagnostics.js";
@@ -27,6 +28,7 @@ export {
   restartSelfTool,
   updateScratchpadTool,
   spawnSubagentTool,
+  spawnSubagentsTool,
   CONTROL_TOOL_NAMES,
 } from "./control.js";
 export { resolveInWorkspace, displayPath, isProtected } from "./paths.js";
@@ -50,6 +52,7 @@ export function defaultTools(opts: ToolSetOptions = {}): Tool[] {
     rememberTool,
     updateScratchpadTool,
     spawnSubagentTool,
+    spawnSubagentsTool,
     askUserTool,
     presentPlanTool,
   ];

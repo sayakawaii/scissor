@@ -323,10 +323,17 @@ file/search/shell tools. The child runs autonomously (it can't ask the user) and
 only its concise **summary** returns to the parent — so the parent's context
 stays focused instead of filling up with, say, a wide codebase investigation.
 
+For several **independent** sub-tasks, `spawn_subagents` fans them out to child
+agents that run **concurrently** and then fans in their summaries (map-reduce) —
+e.g. auditing three modules at once. The parent only sees the aggregated result.
+
 - Child edits happen in the same workspace, so they persist; the verification
   loop still runs after a delegation.
 - Depth is guarded (`maxSubagentDepth`, default 1): a sub-agent cannot spawn
   further sub-agents, preventing runaway recursion.
+- Parallel fan-out is capped (default 5) and is for **disjoint** tasks only —
+  since children share the workspace, concurrent edits to the same files would
+  race. Use `spawn_subagent` for dependent/sequential work.
 - Sub-agent start/finish is shown inline in the REPL.
 
 ## Parallel tool execution

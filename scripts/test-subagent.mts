@@ -15,6 +15,7 @@ import {
   Agent,
   readFileTool,
   spawnSubagentTool,
+  spawnSubagentsTool,
   writeFileTool,
   type ChatParams,
   type ChatResult,
@@ -134,6 +135,113 @@ class ScriptProvider implements LLMProvider {
   await agent.run("delegate nothing");
   const toolMsg = agent.getTranscript().find((m) => m.role === "tool" && m.name === "spawn_subagent");
   assert.match(toolMsg!.content, /'task' is required/, "empty task rejected");
+}
+
+// 4. Parallel fan-out: two independent sub-agents run concurrently, both edits
+//    persist, and the aggregated summary carries both results.
+{
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "scissor-subagents-"));
+
+  // Stateless, content-routed provider so concurrent children stay deterministic
+  // regardless of scheduling order (a shared FIFO queue would race).
+  class RoutingProvider implements LLMProvider {
+    id = "deepseek" as const;
+    model = "script";
+    async chat(p: ChatParams): Promise<ChatResult> {
+      const firstUser = String(p.messages.find((m) => m.role === "user")?.content ?? "");
+      const hasToolResult = p.messages.some((m) => m.role === "tool");
+      if (firstUser.includes("PARENT")) {
+        return hasToolResult
+          ? { text: "parent done", toolCalls: [] }
+          : {
+              text: "",
+              toolCalls: [
+                {
+                  id: "p",
+                  name: "spawn_subagents",
+                  arguments: { tasks: ["TASK_A: write a.txt", "TASK_B: write b.txt"] },
+                },
+              ],
+            };
+      }
+      if (firstUser.includes("TASK_A")) {
+        return hasToolResult
+          ? { text: "SUMMARY A done", toolCalls: [] }
+          : { text: "", toolCalls: [{ id: "ca", name: "write_file", arguments: { path: "a.txt", content: "AAA" } }] };
+      }
+      if (firstUser.includes("TASK_B")) {
+        return hasToolResult
+          ? { text: "SUMMARY B done", toolCalls: [] }
+          : { text: "", toolCalls: [{ id: "cb", name: "write_file", arguments: { path: "b.txt", content: "BBB" } }] };
+      }
+      return { text: "done", toolCalls: [] };
+    }
+  }
+
+  const starts: number[] = [];
+  const agent = new Agent({
+    provider: new RoutingProvider(),
+    tools: [spawnSubagentsTool, writeFileTool, readFileTool],
+    workspaceRoot: dir,
+    approvalPolicy: "auto",
+    systemPrompt: "BASE",
+  });
+  const res = await agent.run("PARENT: split the work", {
+    onSubagentStart: (_task, depth) => starts.push(depth),
+  });
+
+  assert.equal(await fs.readFile(path.join(dir, "a.txt"), "utf8"), "AAA", "child A edit persisted");
+  assert.equal(await fs.readFile(path.join(dir, "b.txt"), "utf8"), "BBB", "child B edit persisted");
+
+  const toolMsg = agent.getTranscript().find((m) => m.role === "tool" && m.name === "spawn_subagents");
+  assert.ok(toolMsg, "spawn_subagents tool result present");
+  assert.match(toolMsg!.content, /2\/2 succeeded/, "aggregated header");
+  assert.match(toolMsg!.content, /SUMMARY A done/, "child A summary aggregated");
+  assert.match(toolMsg!.content, /SUMMARY B done/, "child B summary aggregated");
+  assert.equal(starts.length, 2, "two sub-agents started");
+  assert.ok(starts.every((d) => d === 1), "both at depth 1");
+  assert.equal(res.finalText, "parent done");
+  await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+}
+
+// 5. spawn_subagents needs >= 2 tasks.
+{
+  const provider = new ScriptProvider();
+  provider.queue = [
+    { text: "", toolCalls: [{ id: "s1", name: "spawn_subagents", arguments: { tasks: ["only one"] } }] },
+    { text: "ok", toolCalls: [] },
+  ];
+  const agent = new Agent({
+    provider,
+    tools: [spawnSubagentsTool],
+    workspaceRoot: os.tmpdir(),
+    approvalPolicy: "auto",
+    systemPrompt: "BASE",
+  });
+  await agent.run("fan out one");
+  const toolMsg = agent.getTranscript().find((m) => m.role === "tool" && m.name === "spawn_subagents");
+  assert.match(toolMsg!.content, /at least 2 tasks/, "single-task fan-out rejected");
+}
+
+// 6. Depth guard applies to parallel fan-out too.
+{
+  const provider = new ScriptProvider();
+  provider.queue = [
+    { text: "", toolCalls: [{ id: "s1", name: "spawn_subagents", arguments: { tasks: ["a", "b"] } }] },
+    { text: "did it myself", toolCalls: [] },
+  ];
+  const child = new Agent({
+    provider,
+    tools: [spawnSubagentsTool],
+    workspaceRoot: os.tmpdir(),
+    approvalPolicy: "auto",
+    systemPrompt: "BASE",
+    subagentDepth: 1,
+    maxSubagentDepth: 1,
+  });
+  await child.run("nested fan-out");
+  const toolMsg = child.getTranscript().find((m) => m.role === "tool" && m.name === "spawn_subagents");
+  assert.match(toolMsg!.content, /cannot spawn further sub-agents/, "depth guard blocks parallel nesting");
 }
 
 process.stdout.write("test-subagent: ALL PASS\n");

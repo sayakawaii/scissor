@@ -11,6 +11,7 @@ export const CONTROL_TOOL_NAMES = [
   "restart_self",
   "update_scratchpad",
   "spawn_subagent",
+  "spawn_subagents",
 ] as const;
 
 export const askUserTool: Tool = {
@@ -113,6 +114,30 @@ export const spawnSubagentTool: Tool = {
   async run() {
     return {
       content: "spawn_subagent was not intercepted by the agent loop.",
+      isError: true,
+    };
+  },
+};
+
+export const spawnSubagentsTool: Tool = {
+  name: "spawn_subagents",
+  description:
+    "Fan out several INDEPENDENT sub-tasks to sub-agents that run CONCURRENTLY, then collect their summaries (map-reduce). Use when you have 2+ tasks with no dependencies between them — e.g. 'audit each of these three modules', or 'write tests for A while documenting B'. Each sub-agent has its own clean context and the same file/search/shell tools in the same workspace, and returns a concise summary. IMPORTANT: because they share the workspace and run at the same time, the tasks MUST NOT edit the same files (that would race). For dependent/sequential work, or a single task, use spawn_subagent instead.",
+  parameters: {
+    type: "object",
+    properties: {
+      tasks: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "Two or more complete, standalone sub-task descriptions. Each must include all context its sub-agent needs and what to report back, and must operate on disjoint files.",
+      },
+    },
+    required: ["tasks"],
+  },
+  async run() {
+    return {
+      content: "spawn_subagents was not intercepted by the agent loop.",
       isError: true,
     };
   },
