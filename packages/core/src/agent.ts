@@ -354,26 +354,25 @@ export class Agent {
         return { finalText: result.text, turns: turn, aborted: false };
       }
 
-      // Execute the requested tool calls and feed results back. Independent
-      // read-only calls (non-mutating, non-control) run concurrently; mutating
-      // and control calls run sequentially in order so approval prompts and
-      // side effects stay deterministic. Results are always pushed in the
-      // original call order to keep the transcript valid.
+      // Execute the requested tool calls and feed results back. When a turn's
+      // calls are ALL independent read-only calls (non-mutating, non-control),
+      // run them concurrently. If the turn mixes in any mutating/control call,
+      // run everything sequentially in original order — this keeps approval
+      // prompts deterministic AND ensures a read-only call (e.g. `diagnostics`
+      // or `read_file`) requested after an edit in the same turn observes the
+      // post-edit state instead of racing ahead of the write. Results are always
+      // pushed in original call order to keep the transcript valid.
       const calls = result.toolCalls;
       const results = new Array<ToolResult | undefined>(calls.length);
 
-      const parallel = calls
-        .map((call, i) => ({ call, i }))
-        .filter(({ call }) => this.isParallelSafe(call));
-      if (parallel.length > 1) {
+      const canParallelize =
+        calls.length > 1 && calls.every((call) => this.isParallelSafe(call));
+      if (canParallelize) {
         await Promise.all(
-          parallel.map(async ({ call, i }) => {
+          calls.map(async (call, i) => {
             results[i] = await this.handleToolCall(call, ctx, callbacks, signal);
           }),
         );
-      } else if (parallel.length === 1) {
-        const { call, i } = parallel[0]!;
-        results[i] = await this.handleToolCall(call, ctx, callbacks, signal);
       }
 
       let aborted = false;

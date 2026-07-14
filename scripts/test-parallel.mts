@@ -121,7 +121,9 @@ class ScriptProvider implements LLMProvider {
   assert.ok(!overlaps(log[0]!, log[1]!), "mutating tools ran sequentially (no overlap)");
 }
 
-// 3. Mixed turn: results are pushed in the ORIGINAL call order.
+// 3. Mixed turn (read + write + read): runs FULLY SEQUENTIALLY in call order, so
+//    a read requested after a write in the same turn observes the post-write
+//    state. Results are also pushed back in the original call order.
 {
   const log: Interval[] = [];
   const tools = [
@@ -149,6 +151,18 @@ class ScriptProvider implements LLMProvider {
     systemPrompt: "s",
   });
   await agent.run("mixed");
+
+  // Mixed turn must not parallelize: execution windows do not overlap and they
+  // run in call order (so read_b sees whatever write_m did).
+  assert.deepEqual(
+    log.map((l) => l.name),
+    ["read_a", "write_m", "read_b"],
+    "mixed turn executed sequentially in call order",
+  );
+  assert.ok(
+    !overlaps(log[0]!, log[1]!) && !overlaps(log[1]!, log[2]!),
+    "no overlapping execution windows in a mixed turn",
+  );
 
   const toolMsgs = agent.getTranscript().filter((m) => m.role === "tool");
   assert.deepEqual(

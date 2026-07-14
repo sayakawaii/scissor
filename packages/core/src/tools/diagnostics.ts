@@ -53,24 +53,59 @@ function parseDiagnostics(output: string): Diagnostic[] {
   return diags;
 }
 
-async function detectCommand(workspaceRoot: string): Promise<string | undefined> {
+type Checker = "typecheck" | "lint";
+
+async function readScripts(workspaceRoot: string): Promise<Record<string, string>> {
   try {
     const pkgRaw = await fs.readFile(path.join(workspaceRoot, "package.json"), "utf8");
     const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
-    const scripts = pkg.scripts ?? {};
-    if (scripts.typecheck) return "npm run typecheck";
-    if (scripts["type-check"]) return "npm run type-check";
-    if (scripts.lint) return "npm run lint";
+    return pkg.scripts ?? {};
   } catch {
-    /* no package.json / unreadable */
+    return {};
   }
+}
+
+async function hasTsconfig(workspaceRoot: string): Promise<boolean> {
   try {
     await fs.stat(path.join(workspaceRoot, "tsconfig.json"));
-    return "npx --no-install tsc --noEmit";
+    return true;
   } catch {
-    /* no tsconfig */
+    return false;
   }
-  return undefined;
+}
+
+/**
+ * Resolve the checker command to run. IMPORTANT (security): the command is never
+ * taken from model/tool input — only from the project's own npm scripts,
+ * tsconfig, or a user-controlled `SCISSOR_DIAGNOSTICS_COMMAND` env var. This
+ * keeps `diagnostics` a read-only feedback tool rather than an arbitrary-command
+ * side-channel that could bypass `run_shell`'s approval gate.
+ */
+async function detectCommand(
+  workspaceRoot: string,
+  checker?: Checker,
+): Promise<string | undefined> {
+  const scripts = await readScripts(workspaceRoot);
+  const script = (name: string) => (scripts[name] ? `npm run ${name}` : undefined);
+
+  if (checker === "lint") return script("lint");
+  if (checker === "typecheck") {
+    return (
+      script("typecheck") ??
+      script("type-check") ??
+      ((await hasTsconfig(workspaceRoot)) ? "npx --no-install tsc --noEmit" : undefined)
+    );
+  }
+
+  // Auto: a user-set env override wins, then typecheck, then lint, then tsc.
+  const envOverride = process.env.SCISSOR_DIAGNOSTICS_COMMAND?.trim();
+  if (envOverride) return envOverride;
+  return (
+    script("typecheck") ??
+    script("type-check") ??
+    script("lint") ??
+    ((await hasTsconfig(workspaceRoot)) ? "npx --no-install tsc --noEmit" : undefined)
+  );
 }
 
 function runCommand(
@@ -122,15 +157,16 @@ function runCommand(
 export const diagnosticsTool: Tool = {
   name: "diagnostics",
   description:
-    "Run the project's type-checker / linter and return structured diagnostics (file:line:col severity message) — real semantic feedback instead of guessing from grep. Use it after editing to confirm your change type-checks, or to locate errors. Auto-detects a `typecheck`/`lint` npm script or `tsc --noEmit` from tsconfig.json; pass `command` to override, or `path` to filter results to one file. Read-only.",
+    "Run the project's type-checker / linter and return structured diagnostics (file:line:col severity message) — real semantic feedback instead of guessing from grep. Use it after editing to confirm your change type-checks, or to locate errors. The command is auto-detected from the project's own `typecheck`/`lint` npm scripts or `tsc --noEmit` (tsconfig.json); you cannot pass an arbitrary command (use run_shell for that). Optional `checker` selects 'typecheck' or 'lint'; optional `path` filters results to one file. Read-only.",
   mutating: false,
   parameters: {
     type: "object",
     properties: {
-      command: {
+      checker: {
         type: "string",
+        enum: ["typecheck", "lint"],
         description:
-          "Optional checker command to run (e.g. 'npm run typecheck', 'npx tsc --noEmit'). If omitted, one is detected.",
+          "Which check to run. Omit to auto-detect (typecheck preferred, else lint).",
       },
       path: {
         type: "string",
@@ -139,13 +175,14 @@ export const diagnosticsTool: Tool = {
     },
   },
   async run(args, ctx: ToolContext) {
-    const override = typeof args.command === "string" ? args.command.trim() : "";
-    const command = override || (await detectCommand(ctx.workspaceRoot));
+    const checker =
+      args.checker === "typecheck" || args.checker === "lint" ? args.checker : undefined;
+    const command = await detectCommand(ctx.workspaceRoot, checker);
     if (!command) {
       return {
         content:
-          "No type-checker detected (no `typecheck`/`lint` npm script and no tsconfig.json). " +
-          "Pass a `command` argument to specify one.",
+          `No ${checker ?? "type-checker"} detected (no matching npm script and no tsconfig.json). ` +
+          "Configure a `typecheck`/`lint` script, or set SCISSOR_DIAGNOSTICS_COMMAND.",
         isError: false,
       };
     }

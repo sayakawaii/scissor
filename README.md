@@ -215,11 +215,14 @@ from `package.json` scripts (`typecheck`/`type-check`/`tsc`, then `lint`).
 
 Beyond the automatic loop, the agent can also *ask* for semantic feedback on
 demand via the **`diagnostics` tool** — a pragmatic slice of "LSP as a feedback
-channel". It runs the project's type-checker/linter (an auto-detected
-`typecheck`/`lint` script, or `tsc --noEmit` from `tsconfig.json`; overridable
-with a `command`) and returns structured `file:line:col severity message`
-diagnostics, optionally filtered to a single file — so the model fixes real type
-errors instead of guessing from `grep`.
+channel". It runs the project's type-checker/linter and returns structured
+`file:line:col severity message` diagnostics, optionally filtered to a single
+file — so the model fixes real type errors instead of guessing from `grep`. The
+command is **auto-detected** from the project's own `typecheck`/`lint` npm
+scripts or `tsc --noEmit` (an optional `checker: "typecheck" | "lint"` arg picks
+one); the model **cannot** pass an arbitrary command, so `diagnostics` can't be
+used as a side-channel around `run_shell`'s approval gate. Power users can point
+it elsewhere with the `SCISSOR_DIAGNOSTICS_COMMAND` env var.
 
 ## Model router (token efficiency)
 

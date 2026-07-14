@@ -199,4 +199,56 @@ export const BENCH_TASKS: EvalTask[] = [
         : { pass: false, detail: `probe output: ${JSON.stringify(r.out.slice(0, 80))}` };
     },
   },
+  {
+    // Exercises the checker-feedback -> fix loop that the `diagnostics` tool
+    // enables: the project ships a `typecheck` script that emits a tsc-style
+    // diagnostic until the bug is fixed. The agent should surface it (via
+    // `diagnostics`) and repair the source so the check passes.
+    id: "type-error-fix",
+    title: "Use the checker to locate and fix a defect",
+    tags: ["read", "edit", "shell", "debug", "diagnostics"],
+    async setup(dir) {
+      await write(
+        dir,
+        "area.js",
+        "// A rectangle's area. Keep this a CommonJS module exporting `area`.\n" +
+          "function area(w, h) {\n  return w + h; // BUG: area should multiply, not add\n}\nmodule.exports = { area };\n",
+      );
+      await write(
+        dir,
+        "check.js",
+        [
+          "const { area } = require('./area.js');",
+          "const cases = [[3, 4, 12], [2, 5, 10]];",
+          "for (const [w, h, exp] of cases) {",
+          "  const got = area(w, h);",
+          "  if (got !== exp) {",
+          "    console.log(`area.js(3,10): error TS9001: area(${w},${h}) returned ${got}, expected ${exp}`);",
+          "    process.exit(1);",
+          "  }",
+          "}",
+          "console.log('typecheck ok');",
+          "",
+        ].join("\n"),
+      );
+      await write(
+        dir,
+        "package.json",
+        JSON.stringify({ name: "geo", scripts: { typecheck: "node check.js" } }, null, 2) + "\n",
+      );
+    },
+    prompt:
+      "The project's check (`npm run typecheck`) fails. Use the `diagnostics` tool to see the reported error, then fix the arithmetic bug in area.js so the check passes. Keep area.js a CommonJS module that exports `area` (do not rename or move the file); do not edit check.js or package.json.",
+    async check(dir) {
+      if (!(await exists(dir, "area.js"))) return { pass: false, detail: "area.js is missing" };
+      const r = await node(dir, "check.js");
+      if (!r.ok) return { pass: false, detail: `check still fails: ${r.out.slice(0, 100)}` };
+      if (!r.out.includes("typecheck ok")) {
+        return { pass: false, detail: `unexpected check output: ${JSON.stringify(r.out.slice(0, 80))}` };
+      }
+      const src = await read(dir, "area.js");
+      if (/\bw\s*\+\s*h\b/.test(src)) return { pass: false, detail: "area.js still adds instead of multiplies" };
+      return { pass: true, detail: "checker passes (area fixed)" };
+    },
+  },
 ];

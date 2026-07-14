@@ -48,9 +48,13 @@ may not do.
   to disable. (`packages/cli/src/verify-project.ts`)
 - [x] `diagnostics` tool — an on-demand type-checker/linter feedback channel: the
   agent can run the project's `typecheck`/`lint` script (or `tsc --noEmit`,
-  auto-detected; overridable) and gets back structured `file:line:col severity
-  message` diagnostics, optionally filtered to one file. A pragmatic slice of
-  "LSP as a feedback channel". (`packages/core/src/tools/diagnostics.ts`)
+  auto-detected; `checker` arg selects one) and gets back structured
+  `file:line:col severity message` diagnostics, optionally filtered to one file.
+  A pragmatic slice of "LSP as a feedback channel". The command is never taken
+  from model input (only project scripts / tsconfig / the user-set
+  `SCISSOR_DIAGNOSTICS_COMMAND`), so it can't bypass `run_shell`'s approval gate.
+  Behaviorally covered by the `type-error-fix` bench task.
+  (`packages/core/src/tools/diagnostics.ts`)
 - [ ] Broaden toolchain detection beyond Node (pytest, cargo, go test, etc.).
 - [ ] Run tests (not just typecheck/lint) when they are fast/safe.
 - [ ] Surface a concise diff + test summary at the end of a task.
@@ -75,10 +79,16 @@ Current trimming just drops old rounds. Better:
   workspace + worker tools) and returns only its summary; depth-guarded so
   children can't spawn children. (`runSubagent` in `packages/core/src/agent.ts`,
   `spawn_subagent` in `tools/control.ts`.)
-- [x] Parallel read-only tool execution: independent non-mutating tool calls in
-  a single turn run concurrently, while mutating/control calls stay sequential
-  and results are fed back in original order. (`isParallelSafe` + the tool loop
-  in `packages/core/src/agent.ts`.)
+- [x] Parallel read-only tool execution: a turn's calls run concurrently **only
+  when they are all read-only**; any mutating/control call makes the whole turn
+  sequential in call order, so a read-only call (e.g. `diagnostics`, `read_file`)
+  requested after an edit in the same turn observes the post-edit state. Results
+  are fed back in original order. (`isParallelSafe` + the tool loop in
+  `packages/core/src/agent.ts`; regression in `scripts/test-parallel.mts`.)
+- [ ] Guard against heavyweight parallel duplication: several read-only calls in
+  one turn could each spawn a long (≤120s) `diagnostics`/type-check. Consider a
+  per-tool concurrency cap or a short-lived result cache so N parallel checks
+  don't each rebuild the project.
 
 ### 4a. Short-term (working) memory handling — backlog
 
@@ -165,11 +175,22 @@ Long-term memory is `SCISSOR_MEMORY.md` (durable facts) + saved sessions. Gaps:
   (`packages/cli/src/eval/{runner,agents}.ts`)
 - [x] Harder bench task distilled from a real run: `json-csv-roundtrip` probes
   RFC-4180 quoting + a lossless JSON↔CSV round trip (not just "a file exists").
+- [x] `type-error-fix` bench task: a defect surfaced by the project's checker;
+  the agent must use the checker feedback (via `diagnostics`) and repair it so
+  the check passes — a behavior-level test for the diagnostics feedback loop.
 - [x] trace→eval flywheel (minimal): `scissor eval-gen [trace]` turns a real,
   traced session into a *draft* regression eval case — it recovers the user
   prompt and the files the agent produced and scaffolds a check. Traces now
   record a `user` (prompt) event and write/edit `path`s to make this possible.
   (`packages/cli/src/eval-gen.ts`, `commands/eval-gen.ts`)
+- [ ] Close the flywheel's second half: promotion is manual today and drafts land
+  in the git-ignored `evals/` dir. Add `scissor eval --include <file>` (or auto-
+  discovery of `evals/generated/*`) so a draft can be run without hand-editing,
+  and make accepted cases easy to commit into the suite.
+- [ ] Broaden capture beyond "produced files": eval-gen ignores final answer text
+  and shell side-effects, so Q&A/retrieval sessions (e.g. `retrieve-answer`)
+  generate an empty-assertion draft. Record the final text + key shell outputs in
+  the trace and synthesize answer-contains / stdout-contains checks.
 - [ ] Auto-tighten generated drafts (assert contents / run the program) and offer
   to append accepted drafts straight into the suite.
 - [ ] More tasks (larger multi-file refactors, ambiguous requests) and difficulty
