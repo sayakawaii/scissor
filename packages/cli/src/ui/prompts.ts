@@ -1,4 +1,4 @@
-import { confirm, input, select } from "@inquirer/prompts";
+import { checkbox, confirm, input, select } from "@inquirer/prompts";
 import type {
   ApprovalDecision,
   PlanDecision,
@@ -34,23 +34,66 @@ export async function promptApproval(
   return choice;
 }
 
-/** Handle the ask_user control tool. */
+const OTHER = "__other__";
+
+/** Handle the ask_user control tool (interactive: keyboard select / checkbox). */
 export async function promptAskUser(
+  question: string,
+  options?: string[],
+  allowMultiple?: boolean,
+): Promise<string> {
+  process.stdout.write("\n" + theme.info("? ") + theme.bold(question) + "\n");
+
+  if (options && options.length > 0) {
+    if (allowMultiple) {
+      // Space to toggle, enter to submit. "Other" lets the user add free text.
+      const picked = await checkbox<string>({
+        message: "Select one or more (space to toggle, enter to confirm)",
+        choices: [
+          ...options.map((o) => ({ name: o, value: o })),
+          { name: "Other (type my own)", value: OTHER },
+        ],
+      });
+      const chosen = picked.filter((p) => p !== OTHER);
+      if (picked.includes(OTHER)) {
+        const extra = await input({ message: "Your answer" });
+        if (extra.trim()) chosen.push(extra.trim());
+      }
+      if (chosen.length > 0) return chosen.join(", ");
+      // Nothing selected — fall back to free text so we never return empty.
+      return await input({ message: "Your answer" });
+    }
+
+    const choice = await select<string>({
+      message: "Choose an answer",
+      choices: [
+        ...options.map((o) => ({ name: o, value: o })),
+        { name: "Other (type my own)", value: OTHER },
+      ],
+    });
+    if (choice !== OTHER) return choice;
+  }
+  return await input({ message: "Your answer" });
+}
+
+/**
+ * Non-interactive ask_user handler (used under --auto or when there is no TTY):
+ * show the question for visibility, then return without blocking so headless /
+ * piped runs don't hang. It hands the decision back to the agent rather than
+ * silently committing to an arbitrary option.
+ */
+export async function autoAnswerAsk(
   question: string,
   options?: string[],
 ): Promise<string> {
   process.stdout.write("\n" + theme.info("? ") + theme.bold(question) + "\n");
   if (options && options.length > 0) {
-    const choice = await select<string>({
-      message: "Choose an answer",
-      choices: [
-        ...options.map((o) => ({ name: o, value: o })),
-        { name: "Other (type my own)", value: "__other__" },
-      ],
-    });
-    if (choice !== "__other__") return choice;
+    process.stdout.write(theme.dim(`  options: ${options.join(" | ")}\n`));
   }
-  return await input({ message: "Your answer" });
+  process.stdout.write(theme.dim("  (no interactive user — proceeding automatically)\n"));
+  return options && options.length > 0
+    ? `No interactive user is available. Suggested options were: ${options.join(" | ")}. Proceed using your best judgment.`
+    : "No interactive user is available. Proceed using your best judgment.";
 }
 
 function renderPlan(summary: string, steps: string[]): void {

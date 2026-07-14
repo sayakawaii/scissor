@@ -235,6 +235,13 @@ goose is a mature, general-purpose agent; the biggest deltas to close:
 - [x] `--auto` no longer stalls on plan approval: plans are auto-approved (shown
   for visibility) while dangerous actions still confirm, so one-shot/piped runs
   don't hang. (`autoApprovePlan` in `packages/cli/src/ui/prompts.ts`)
+- [x] `ask_user` click-to-choose Q&A: with `options` the user picks via a
+  keyboard select instead of typing; `allow_multiple` uses a checkbox
+  (space to toggle, enter to submit) with an "Other" free-text escape. Under
+  `--auto` or when there's no TTY, questions are auto-answered (non-blocking) so
+  headless/piped runs don't hang. Full GUI popup (mouse click) still needs the
+  planned Electron layer. (`promptAskUser`/`autoAnswerAsk`,
+  `isNonInteractive` in `commands/chat.ts`)
 - Better streaming layout, spinners during tool runs, syntax-highlighted code.
 - `/model` and `/provider` switching mid-session.
 - Richer diff rendering (word-level highlights).

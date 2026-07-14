@@ -33,7 +33,13 @@ import {
   formatToolResult,
   theme,
 } from "./ui/render.js";
-import { autoApprovePlan, promptApproval, promptAskUser, promptPlan } from "./ui/prompts.js";
+import {
+  autoAnswerAsk,
+  autoApprovePlan,
+  promptApproval,
+  promptAskUser,
+  promptPlan,
+} from "./ui/prompts.js";
 
 /** Long-term memory file loaded into the system prompt when present. */
 export const MEMORY_FILENAME = "SCISSOR_MEMORY.md";
@@ -313,8 +319,12 @@ export class TurnRenderer {
 }
 
 export interface CallbackOptions {
-  /** Auto-approve plans instead of prompting (used under --auto). */
-  autoApprovePlan?: boolean;
+  /**
+   * Don't block on interactive prompts: auto-approve plans and auto-answer
+   * ask_user. Set under --auto or when there is no interactive TTY, so headless
+   * / piped runs never hang waiting for input that can't arrive.
+   */
+  nonInteractive?: boolean;
 }
 
 /** Wire the standard CLI callbacks around an agent run, with optional tracing. */
@@ -347,8 +357,11 @@ export function makeCallbacks(renderer: TurnRenderer, tracer?: Tracer, opts: Cal
       });
     },
     onRequestApproval: promptApproval,
-    onAskUser: promptAskUser,
-    onPresentPlan: opts.autoApprovePlan ? autoApprovePlan : promptPlan,
+    onAskUser: (question: string, options?: string[], allowMultiple?: boolean) =>
+      opts.nonInteractive
+        ? autoAnswerAsk(question, options)
+        : promptAskUser(question, options, allowMultiple),
+    onPresentPlan: opts.nonInteractive ? autoApprovePlan : promptPlan,
     onUsage: (u: { promptTokens?: number; completionTokens?: number; totalTokens?: number }) =>
       tracer?.record("usage", { ...u }),
     onVerifyStart: renderer.onVerifyStart,

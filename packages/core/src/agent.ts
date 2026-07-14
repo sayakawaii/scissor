@@ -36,7 +36,7 @@ export interface AgentCallbacks {
   /** Ask the user to approve a mutating tool call. */
   onRequestApproval?(call: ToolCall, preview: ToolPreview): Promise<ApprovalDecision>;
   /** Handle the ask_user control tool. Returns the user's answer. */
-  onAskUser?(question: string, options?: string[]): Promise<string>;
+  onAskUser?(question: string, options?: string[], allowMultiple?: boolean): Promise<string>;
   /** Handle the present_plan control tool. */
   onPresentPlan?(summary: string, steps: string[]): Promise<PlanDecision>;
   onUsage?(usage: Usage): void;
@@ -527,10 +527,11 @@ export class Agent {
       const options = Array.isArray(call.arguments.options)
         ? (call.arguments.options as unknown[]).map((o) => String(o))
         : undefined;
+      const allowMultiple = call.arguments.allow_multiple === true;
       if (!callbacks.onAskUser) {
         return { content: "No UI available to ask the user.", isError: true };
       }
-      const answer = await callbacks.onAskUser(question, options);
+      const answer = await callbacks.onAskUser(question, options, allowMultiple);
       return { content: `User answered: ${answer}` };
     }
 

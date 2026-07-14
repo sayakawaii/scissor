@@ -16,7 +16,7 @@ export const CONTROL_TOOL_NAMES = [
 export const askUserTool: Tool = {
   name: "ask_user",
   description:
-    "Ask the user a clarifying question when the request is ambiguous or you need a decision only they can make. Provide options when the answer is a choice. Prefer this over guessing.",
+    "Ask the user a clarifying question when the request is ambiguous or you need a decision only they can make. Provide options when the answer is a choice (the user picks instead of typing). Set allow_multiple to let the user select several options. Prefer this over guessing.",
   parameters: {
     type: "object",
     properties: {
@@ -25,6 +25,11 @@ export const askUserTool: Tool = {
         type: "array",
         items: { type: "string" },
         description: "Optional list of suggested answers to choose from.",
+      },
+      allow_multiple: {
+        type: "boolean",
+        description:
+          "If true (only meaningful with options), the user may select multiple answers.",
       },
     },
     required: ["question"],

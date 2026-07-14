@@ -35,6 +35,15 @@ export interface ChatOptions {
   trace?: boolean;
 }
 
+/**
+ * Interactive prompts (plan approval, ask_user) can only work with a real TTY.
+ * Skip them under --auto or when stdin isn't a TTY (piped/headless), so those
+ * runs never hang waiting for input that can't arrive.
+ */
+function isNonInteractive(policy?: ApprovalPolicy): boolean {
+  return policy === "auto" || !process.stdin.isTTY;
+}
+
 async function resolveResume(resume?: string): Promise<SessionData | undefined> {
   if (!resume) return undefined;
   try {
@@ -62,7 +71,7 @@ export async function runOneShot(prompt: string, opts: ChatOptions): Promise<num
   process.on("SIGINT", onSigint);
   try {
     session.tracer?.record("user", { prompt });
-    const cbOpts = { autoApprovePlan: session.data.approvalPolicy === "auto" };
+    const cbOpts = { nonInteractive: isNonInteractive(session.data.approvalPolicy) };
     const result = await session.agent.run(
       prompt,
       makeCallbacks(renderer, session.tracer, cbOpts),
@@ -174,7 +183,7 @@ async function replLoopInner(session: Session, loopOpts: LoopOptions): Promise<n
       const result = await session.agent.run(
         trimmed,
         makeCallbacks(renderer, session.tracer, {
-          autoApprovePlan: session.data.approvalPolicy === "auto",
+          nonInteractive: isNonInteractive(session.data.approvalPolicy),
         }),
         controller.signal,
       );
