@@ -1,27 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import fg from "fast-glob";
-
-const DEFAULT_IGNORES = [
-  "**/node_modules/**",
-  "**/.git/**",
-  "**/dist/**",
-  "**/build/**",
-  "**/out/**",
-  "**/.next/**",
-  "**/coverage/**",
-  "**/*.min.*",
-  "**/*.tsbuildinfo",
-  "**/*.lock",
-  "**/package-lock.json",
-];
-
-const SOURCE_EXTENSIONS = new Set([
-  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts",
-  ".py", ".go", ".rs", ".java", ".kt", ".rb", ".php", ".cs",
-  ".c", ".h", ".cpp", ".hpp", ".cc", ".swift", ".scala",
-  ".md", ".json", ".yaml", ".yml", ".toml",
-]);
+import { listWorkspaceFiles, readTextFile } from "./fs-scan.js";
 
 const STOPWORDS = new Set([
   "the", "a", "an", "and", "or", "of", "to", "in", "is", "it", "for", "on",
@@ -30,40 +9,12 @@ const STOPWORDS = new Set([
   "fix", "use", "using", "find", "code", "file", "files", "function",
 ]);
 
-/** Read .gitignore patterns into fast-glob-compatible ignore globs. */
-async function readGitignore(root: string): Promise<string[]> {
-  try {
-    const raw = await fs.readFile(path.join(root, ".gitignore"), "utf8");
-    const patterns: string[] = [];
-    for (const line of raw.split("\n")) {
-      const t = line.trim();
-      if (!t || t.startsWith("#") || t.startsWith("!")) continue;
-      const clean = t.replace(/^\/+/, "").replace(/\/+$/, "");
-      if (clean.includes("/")) patterns.push(clean, `${clean}/**`);
-      else patterns.push(`**/${clean}`, `**/${clean}/**`);
-    }
-    return patterns;
-  } catch {
-    return [];
-  }
-}
-
 /** List candidate source files (workspace-relative), respecting ignores. */
 export async function listSourceFiles(
   root: string,
   maxFiles = 5000,
 ): Promise<string[]> {
-  const ignore = [...DEFAULT_IGNORES, ...(await readGitignore(root))];
-  const all = await fg("**/*", {
-    cwd: root,
-    ignore,
-    dot: false,
-    onlyFiles: true,
-    followSymbolicLinks: false,
-    suppressErrors: true,
-  });
-  const filtered = all.filter((f) => SOURCE_EXTENSIONS.has(path.extname(f).toLowerCase()));
-  return filtered.slice(0, maxFiles);
+  return listWorkspaceFiles(root, { maxFiles, sourceOnly: true });
 }
 
 /** Extract a handful of top-level symbol names from source text. */
@@ -219,15 +170,9 @@ export async function retrieveMulti(
 
   const scored: RetrieveResult[] = [];
   for (const rel of files) {
-    let content: string;
-    try {
-      const stat = await fs.stat(path.join(root, rel));
-      if (stat.size > 512 * 1024) continue;
-      content = await fs.readFile(path.join(root, rel), "utf8");
-    } catch {
-      continue;
-    }
-    if (content.includes("\u0000")) continue;
+    const file = await readTextFile(path.join(root, rel), { maxBytes: 512 * 1024 });
+    if (!file) continue;
+    const content = file.content;
     const lower = content.toLowerCase();
     const pathLower = rel.toLowerCase();
 

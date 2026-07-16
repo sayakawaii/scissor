@@ -1,6 +1,6 @@
-import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { runProcess } from "@scissor/core";
 
 /** Exit code a supervised agent child uses to request a verified restart. */
 export const RESTART_EXIT_CODE = 75;
@@ -33,27 +33,13 @@ export interface ExecResult {
 }
 
 /** Run a raw command line through the shell (caller controls quoting). */
-export function execShell(
+export async function execShell(
   line: string,
   cwd: string,
   timeoutMs = 300_000,
 ): Promise<ExecResult> {
-  return new Promise((resolve) => {
-    const child = spawn(line, { cwd, env: process.env, shell: true, windowsHide: true });
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (b) => (stdout += b.toString()));
-    child.stderr?.on("data", (b) => (stderr += b.toString()));
-    const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      resolve({ ok: false, code: null, stdout, stderr: stderr + String(err) });
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ ok: code === 0, code, stdout, stderr });
-    });
-  });
+  const r = await runProcess(line, { cwd, timeoutMs });
+  return { ok: r.started && r.code === 0, code: r.code, stdout: r.stdout, stderr: r.stderr };
 }
 
 /**
@@ -75,26 +61,6 @@ export function exec(
   cwd: string,
   timeoutMs = 300_000,
 ): Promise<ExecResult> {
-  return new Promise((resolve) => {
-    const line = [command, ...args].map(quoteArg).join(" ");
-    const child = spawn(line, {
-      cwd,
-      env: process.env,
-      shell: true,
-      windowsHide: true,
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (b) => (stdout += b.toString()));
-    child.stderr?.on("data", (b) => (stderr += b.toString()));
-    const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      resolve({ ok: false, code: null, stdout, stderr: stderr + String(err) });
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ ok: code === 0, code, stdout, stderr });
-    });
-  });
+  const line = [command, ...args].map(quoteArg).join(" ");
+  return execShell(line, cwd, timeoutMs);
 }

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { runProcess } from "../proc.js";
 import type { Tool, ToolContext } from "../types.js";
 
 const MAX_OUTPUT = 30 * 1024;
@@ -53,60 +53,23 @@ export const runShellTool: Tool = {
         ? args.timeout_ms
         : DEFAULT_TIMEOUT_MS;
 
-    return await new Promise((resolve) => {
-      const isWin = process.platform === "win32";
-      const shell = isWin ? process.env.ComSpec || "cmd.exe" : "/bin/sh";
-      const shellArgs = isWin ? ["/d", "/s", "/c", command] : ["-c", command];
-
-      const child = spawn(shell, shellArgs, {
-        cwd: ctx.workspaceRoot,
-        env: process.env,
-        windowsHide: true,
-      });
-
-      let output = "";
-      let truncated = false;
-      const append = (buf: Buffer) => {
-        if (truncated) return;
-        output += buf.toString();
-        if (output.length > MAX_OUTPUT) {
-          output = output.slice(0, MAX_OUTPUT);
-          truncated = true;
-        }
-      };
-
-      child.stdout.on("data", append);
-      child.stderr.on("data", append);
-
-      const timer = setTimeout(() => {
-        child.kill();
-        resolve({
-          content: `Command timed out after ${timeout}ms.\n${output}`,
-          isError: true,
-        });
-      }, timeout);
-
-      const onAbort = () => {
-        child.kill();
-      };
-      ctx.signal?.addEventListener("abort", onAbort, { once: true });
-
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        ctx.signal?.removeEventListener("abort", onAbort);
-        resolve({ content: `Failed to start command: ${err.message}`, isError: true });
-      });
-
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        ctx.signal?.removeEventListener("abort", onAbort);
-        const suffix = truncated ? "\n... (output truncated)" : "";
-        const body = output.trim().length > 0 ? output + suffix : "(no output)";
-        resolve({
-          content: `Exit code: ${code ?? "unknown"}\n${body}`,
-          isError: code !== 0,
-        });
-      });
+    const r = await runProcess(command, {
+      cwd: ctx.workspaceRoot,
+      timeoutMs: timeout,
+      maxOutput: MAX_OUTPUT,
+      signal: ctx.signal,
     });
+    if (!r.started) {
+      return { content: `Failed to start command: ${r.stderr.trim()}`, isError: true };
+    }
+    if (r.timedOut) {
+      return { content: `Command timed out after ${timeout}ms.\n${r.output}`, isError: true };
+    }
+    const suffix = r.truncated ? "\n... (output truncated)" : "";
+    const body = r.output.trim().length > 0 ? r.output + suffix : "(no output)";
+    return {
+      content: `Exit code: ${r.code ?? "unknown"}\n${body}`,
+      isError: r.code !== 0,
+    };
   },
 };

@@ -1,14 +1,11 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
-import type { VerificationResult, VerifyFn } from "@scissor/core";
+import { detectProjectChecks, type VerificationResult, type VerifyFn } from "@scissor/core";
 import { execShell } from "./self/repo.js";
+import { tail } from "./text.js";
 
 export interface VerifyCommand {
   label: string;
   line: string;
 }
-
-const NPM = process.platform === "win32" ? "npm.cmd" : "npm";
 
 /**
  * Detect a safe, fast set of verification commands for the workspace. Currently
@@ -29,22 +26,15 @@ export async function detectVerifyCommands(
       .map((line, i) => ({ label: `custom ${i + 1}`, line }));
   }
 
+  const checks = await detectProjectChecks(root);
   const commands: VerifyCommand[] = [];
-  try {
-    const pkgRaw = await fs.readFile(path.join(root, "package.json"), "utf8");
-    const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
-    const scripts = pkg.scripts ?? {};
-    const typecheckKey = ["typecheck", "type-check", "tsc"].find((k) => scripts[k]);
-    if (typecheckKey) {
-      commands.push({ label: typecheckKey, line: `${NPM} run ${typecheckKey}` });
-    }
-    if (scripts["lint"]) commands.push({ label: "lint", line: `${NPM} run lint` });
-    // In TDD mode, correctness is proven by tests, so run them too.
-    if (opts.tdd && scripts["test"]) {
-      commands.push({ label: "test", line: `${NPM} test` });
-    }
-  } catch {
-    /* not a node project or no package.json */
+  if (checks.typecheck) {
+    commands.push({ label: checks.typecheck.label, line: checks.typecheck.command });
+  }
+  if (checks.lint) commands.push({ label: checks.lint.label, line: checks.lint.command });
+  // In TDD mode, correctness is proven by tests, so run them too.
+  if (opts.tdd && checks.test) {
+    commands.push({ label: checks.test.label, line: checks.test.command });
   }
   return commands;
 }
@@ -77,8 +67,4 @@ export async function makeVerifier(
       summary: `${commands.length} check(s) passed: ${commands.map((c) => c.label).join(", ")}`,
     };
   };
-}
-
-function tail(s: string, n: number): string {
-  return s.length > n ? "... " + s.slice(s.length - n) : s;
 }

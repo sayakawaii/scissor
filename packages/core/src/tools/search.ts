@@ -1,10 +1,9 @@
-import { promises as fs } from "node:fs";
-import fg from "fast-glob";
+import { listWorkspaceFiles, readTextFile } from "../fs-scan.js";
 import type { Tool } from "../types.js";
 import { displayPath, resolveInWorkspace } from "./paths.js";
 
 const MAX_RESULTS = 100;
-const IGNORE = ["**/node_modules/**", "**/.git/**", "**/dist/**", "**/*.tsbuildinfo"];
+const MAX_FILE_BYTES = 1024 * 1024;
 
 export const globTool: Tool = {
   name: "glob",
@@ -24,13 +23,7 @@ export const globTool: Tool = {
     const pattern = String(args.pattern ?? "");
     if (!pattern) return { content: "Error: 'pattern' is required.", isError: true };
     try {
-      const matches = await fg(pattern, {
-        cwd: ctx.workspaceRoot,
-        ignore: IGNORE,
-        dot: false,
-        onlyFiles: true,
-        followSymbolicLinks: false,
-      });
+      const matches = await listWorkspaceFiles(ctx.workspaceRoot, { include: pattern });
       if (matches.length === 0) return { content: "No files matched." };
       const shown = matches.slice(0, MAX_RESULTS);
       const suffix =
@@ -76,15 +69,9 @@ export const grepTool: Tool = {
     } catch (err) {
       return { content: `Error: invalid regex: ${(err as Error).message}`, isError: true };
     }
-    const include = args.include ? String(args.include) : "**/*";
+    const include = args.include ? String(args.include) : undefined;
     try {
-      const files = await fg(include, {
-        cwd: ctx.workspaceRoot,
-        ignore: IGNORE,
-        dot: false,
-        onlyFiles: true,
-        followSymbolicLinks: false,
-      });
+      const files = await listWorkspaceFiles(ctx.workspaceRoot, { include });
       const results: string[] = [];
       for (const rel of files) {
         if (results.length >= MAX_RESULTS) break;
@@ -94,20 +81,12 @@ export const grepTool: Tool = {
         } catch {
           continue;
         }
-        let content: string;
-        try {
-          const stat = await fs.stat(abs);
-          if (stat.size > 1024 * 1024) continue;
-          content = await fs.readFile(abs, "utf8");
-        } catch {
-          continue;
-        }
-        if (content.includes("\u0000")) continue; // skip binary
-        const lines = content.split("\n");
-        for (let i = 0; i < lines.length; i++) {
+        const file = await readTextFile(abs, { maxBytes: MAX_FILE_BYTES });
+        if (!file) continue;
+        for (let i = 0; i < file.lines.length; i++) {
           if (results.length >= MAX_RESULTS) break;
-          if (regex.test(lines[i] ?? "")) {
-            results.push(`${displayPath(ctx.workspaceRoot, abs)}:${i + 1}: ${(lines[i] ?? "").trim()}`);
+          if (regex.test(file.lines[i] ?? "")) {
+            results.push(`${displayPath(ctx.workspaceRoot, abs)}:${i + 1}: ${(file.lines[i] ?? "").trim()}`);
           }
         }
       }

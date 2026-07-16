@@ -1,6 +1,5 @@
-import { spawn } from "node:child_process";
-import { promises as fs } from "node:fs";
-import path from "node:path";
+import { runProcess } from "../proc.js";
+import { detectProjectChecks } from "../project-checks.js";
 import type { Tool, ToolContext } from "../types.js";
 
 const MAX_OUTPUT = 64 * 1024;
@@ -55,24 +54,7 @@ function parseDiagnostics(output: string): Diagnostic[] {
 
 type Checker = "typecheck" | "lint";
 
-async function readScripts(workspaceRoot: string): Promise<Record<string, string>> {
-  try {
-    const pkgRaw = await fs.readFile(path.join(workspaceRoot, "package.json"), "utf8");
-    const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
-    return pkg.scripts ?? {};
-  } catch {
-    return {};
-  }
-}
-
-async function hasTsconfig(workspaceRoot: string): Promise<boolean> {
-  try {
-    await fs.stat(path.join(workspaceRoot, "tsconfig.json"));
-    return true;
-  } catch {
-    return false;
-  }
-}
+const TSC_FALLBACK = "npx --no-install tsc --noEmit";
 
 /**
  * Resolve the checker command to run. IMPORTANT (security): the command is never
@@ -85,73 +67,35 @@ async function detectCommand(
   workspaceRoot: string,
   checker?: Checker,
 ): Promise<string | undefined> {
-  const scripts = await readScripts(workspaceRoot);
-  const script = (name: string) => (scripts[name] ? `npm run ${name}` : undefined);
+  const checks = await detectProjectChecks(workspaceRoot);
 
-  if (checker === "lint") return script("lint");
+  if (checker === "lint") return checks.lint?.command;
   if (checker === "typecheck") {
-    return (
-      script("typecheck") ??
-      script("type-check") ??
-      ((await hasTsconfig(workspaceRoot)) ? "npx --no-install tsc --noEmit" : undefined)
-    );
+    return checks.typecheck?.command ?? (checks.hasTsconfig ? TSC_FALLBACK : undefined);
   }
 
   // Auto: a user-set env override wins, then typecheck, then lint, then tsc.
   const envOverride = process.env.SCISSOR_DIAGNOSTICS_COMMAND?.trim();
   if (envOverride) return envOverride;
   return (
-    script("typecheck") ??
-    script("type-check") ??
-    script("lint") ??
-    ((await hasTsconfig(workspaceRoot)) ? "npx --no-install tsc --noEmit" : undefined)
+    checks.typecheck?.command ??
+    checks.lint?.command ??
+    (checks.hasTsconfig ? TSC_FALLBACK : undefined)
   );
 }
 
-function runCommand(
+async function runCommand(
   command: string,
   cwd: string,
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<{ code: number | null; output: string; started: boolean }> {
-  return new Promise((resolve) => {
-    const isWin = process.platform === "win32";
-    const shell = isWin ? process.env.ComSpec || "cmd.exe" : "/bin/sh";
-    const shellArgs = isWin ? ["/d", "/s", "/c", command] : ["-c", command];
-    const child = spawn(shell, shellArgs, { cwd, env: process.env, windowsHide: true });
-
-    let output = "";
-    let truncated = false;
-    const append = (buf: Buffer) => {
-      if (truncated) return;
-      output += buf.toString();
-      if (output.length > MAX_OUTPUT) {
-        output = output.slice(0, MAX_OUTPUT);
-        truncated = true;
-      }
-    };
-    child.stdout.on("data", append);
-    child.stderr.on("data", append);
-
-    const timer = setTimeout(() => {
-      child.kill();
-      resolve({ code: null, output: output + `\n(timed out after ${timeoutMs}ms)`, started: true });
-    }, timeoutMs);
-
-    const onAbort = () => child.kill();
-    signal?.addEventListener("abort", onAbort, { once: true });
-
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      resolve({ code: null, output: `Failed to start: ${err.message}`, started: false });
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      resolve({ code, output, started: true });
-    });
-  });
+  const r = await runProcess(command, { cwd, timeoutMs, maxOutput: MAX_OUTPUT, signal });
+  if (!r.started) {
+    return { code: null, output: `Failed to start: ${r.stderr.trim()}`, started: false };
+  }
+  const output = r.timedOut ? `${r.output}\n(timed out after ${timeoutMs}ms)` : r.output;
+  return { code: r.code, output, started: true };
 }
 
 export const diagnosticsTool: Tool = {

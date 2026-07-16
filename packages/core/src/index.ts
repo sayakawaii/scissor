@@ -1,5 +1,8 @@
 export * from "./types.js";
 export * from "./config.js";
+export * from "./proc.js";
+export * from "./project-checks.js";
+export * from "./fs-scan.js";
 export * from "./prompt.js";
 export * from "./agent.js";
 export * from "./session-store.js";
@@ -14,6 +17,7 @@ export * from "./tools/index.js";
 export {
   createProvider,
   createRoutedProvider,
+  safeParseJsonObject,
   MissingApiKeyError,
   AnthropicProvider,
   OpenAICompatibleProvider,

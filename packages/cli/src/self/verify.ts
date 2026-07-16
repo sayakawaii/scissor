@@ -1,3 +1,4 @@
+import { tail } from "../text.js";
 import { exec } from "./repo.js";
 
 export interface VerifyResult {
@@ -61,8 +62,4 @@ export async function verifySelfUpdate(repo: string): Promise<VerifyResult> {
   const evalResult = await verifyEval(repo);
   if (!evalResult.ok) return evalResult;
   return { ok: true, step: "eval", detail: "type-check, build, and eval passed" };
-}
-
-function tail(s: string, n = 2000): string {
-  return s.length > n ? s.slice(s.length - n) : s;
 }

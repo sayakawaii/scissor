@@ -1,6 +1,4 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
-import { execShell } from "../self/repo.js";
+import { exists as fileExists, read as readFile, runNode, write } from "./task-helpers.js";
 
 export interface EvalCheckResult {
   pass: boolean;
@@ -18,31 +16,6 @@ export interface EvalTask {
   /** Score the result. `finalText` is the agent's last message. */
   check: (dir: string, finalText: string) => Promise<EvalCheckResult>;
   timeoutMs?: number;
-}
-
-async function readFile(dir: string, rel: string): Promise<string> {
-  return fs.readFile(path.join(dir, rel), "utf8");
-}
-
-async function fileExists(dir: string, rel: string): Promise<boolean> {
-  try {
-    await fs.stat(path.join(dir, rel));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function write(dir: string, rel: string, content: string): Promise<void> {
-  const abs = path.join(dir, rel);
-  await fs.mkdir(path.dirname(abs), { recursive: true });
-  await fs.writeFile(abs, content, "utf8");
-}
-
-/** Run `node <script>` in the workspace and return trimmed stdout. */
-async function runNode(dir: string, script: string): Promise<{ ok: boolean; out: string }> {
-  const r = await execShell(`node ${script}`, dir, 20_000);
-  return { ok: r.ok, out: (r.stdout + r.stderr).trim() };
 }
 
 export const EVAL_TASKS: EvalTask[] = [

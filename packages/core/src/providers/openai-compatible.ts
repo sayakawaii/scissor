@@ -12,6 +12,7 @@ import type {
   Tool,
   ToolCall,
 } from "../types.js";
+import { safeParseJsonObject } from "./util.js";
 
 export interface OpenAICompatibleOptions {
   id: ProviderId;
@@ -102,7 +103,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       .map(([idx, acc]) => ({
         id: acc.id || `call_${idx}`,
         name: acc.name,
-        arguments: safeParseArgs(acc.args),
+        arguments: safeParseJsonObject(acc.args),
       }))
       .filter((c) => c.name.length > 0);
 
@@ -152,17 +153,5 @@ function toOpenAIMessage(msg: Message): ChatCompletionMessageParam {
     }
     default:
       return { role: "user", content: msg.content };
-  }
-}
-
-function safeParseArgs(raw: string): Record<string, unknown> {
-  if (!raw || raw.trim().length === 0) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    return typeof parsed === "object" && parsed !== null
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
   }
 }

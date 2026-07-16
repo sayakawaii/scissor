@@ -12,6 +12,7 @@ import type {
   Tool,
   ToolCall,
 } from "../types.js";
+import { safeParseJsonObject } from "./util.js";
 
 export interface AnthropicOptions {
   apiKey: string;
@@ -78,7 +79,7 @@ export class AnthropicProvider implements LLMProvider {
     const toolCalls: ToolCall[] = [...toolAcc.values()].map((acc) => ({
       id: acc.id,
       name: acc.name,
-      arguments: safeParse(acc.json),
+      arguments: safeParseJsonObject(acc.json),
     }));
 
     return {
@@ -161,15 +162,4 @@ function toAnthropicMessages(msgs: Message[]): {
     system: systemParts.length > 0 ? systemParts.join("\n\n") : undefined,
     messages,
   };
-}
-
-function safeParse(raw: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(raw);
-    return typeof parsed === "object" && parsed !== null
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
 }

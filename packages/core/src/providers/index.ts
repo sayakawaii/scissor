@@ -16,6 +16,7 @@ import {
 
 export { AnthropicProvider } from "./anthropic.js";
 export { OpenAICompatibleProvider } from "./openai-compatible.js";
+export { safeParseJsonObject } from "./util.js";
 export {
   RouterProvider,
   routeTurn,

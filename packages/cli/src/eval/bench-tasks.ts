@@ -1,28 +1,8 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
-import { execShell } from "../self/repo.js";
+import { exists, read, runNode, write } from "./task-helpers.js";
 import type { EvalTask } from "./tasks.js";
 
-async function write(dir: string, rel: string, content: string): Promise<void> {
-  const abs = path.join(dir, rel);
-  await fs.mkdir(path.dirname(abs), { recursive: true });
-  await fs.writeFile(abs, content, "utf8");
-}
-async function read(dir: string, rel: string): Promise<string> {
-  return fs.readFile(path.join(dir, rel), "utf8");
-}
-async function exists(dir: string, rel: string): Promise<boolean> {
-  try {
-    await fs.stat(path.join(dir, rel));
-    return true;
-  } catch {
-    return false;
-  }
-}
-async function node(dir: string, cmd: string): Promise<{ ok: boolean; out: string }> {
-  const r = await execShell(`node ${cmd}`, dir, 25_000);
-  return { ok: r.ok, out: (r.stdout + r.stderr).trim() };
-}
+// Bench tasks allow a slightly longer per-run budget than the quick eval suite.
+const node = (dir: string, cmd: string) => runNode(dir, cmd, 25_000);
 
 /**
  * Harder, more differentiating scenarios than the quick eval suite. These probe
