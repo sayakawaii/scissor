@@ -14,6 +14,19 @@ export interface PromptContext {
   clarify?: boolean;
 }
 
+/**
+ * Guidance injected when scissor should lead an ambiguous request with a
+ * clarifying question. Used in two ways: baked into the system prompt when
+ * clarification is forced on (`--clarify`), or appended dynamically for a single
+ * run when the auto-detector flags the request as vague.
+ */
+export const CLARIFY_GUIDANCE = [
+  `INTENT CLARIFICATION:`,
+  `- This request looks ambiguous or underspecified. Before present_plan or any edit, your FIRST action must be a single ask_user call offering 2-3 concrete interpretations as options (include an "other" path).`,
+  `- Treat likely typos and shorthand charitably: state your best reading of the request as one of the options rather than guessing silently.`,
+  `- Ask at most one round, then proceed. Never ask about trivial details you can decide yourself. If, on reflection, the request is actually clear enough, skip the question and act.`,
+].join("\n");
+
 /** Build the system prompt that governs scissor's agent behavior. */
 export function buildSystemPrompt(ctx: PromptContext): string {
   const planGuidance =
@@ -44,15 +57,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
       ]
     : [];
 
-  const clarifyGuidance = ctx.clarify
-    ? [
-        ``,
-        `INTENT CLARIFICATION is ENABLED:`,
-        `- If the request is clearly ambiguous or underspecified (vague verbs like "improve/fix it", no concrete target, or plausibly several very different interpretations), your FIRST action must be a single ask_user call offering 2-3 concrete interpretations as options (include an "other" path), BEFORE present_plan or any edit.`,
-        `- Treat likely typos and shorthand charitably: state your best reading of the request as one of the options rather than guessing silently.`,
-        `- Do NOT clarify when the request is already specific enough to act on; ask at most one round, then proceed. Never ask about trivial details you can decide yourself.`,
-      ]
-    : [];
+  const clarifyGuidance = ctx.clarify ? ["", CLARIFY_GUIDANCE] : [];
 
   const memoryBlock = ctx.memory?.trim()
     ? [``, `Long-term project memory (persisted across sessions):`, ctx.memory.trim()]

@@ -1,5 +1,6 @@
 import { CONTROL_TOOL_NAMES } from "./tools/control.js";
-import { buildSystemPrompt } from "./prompt.js";
+import { buildSystemPrompt, CLARIFY_GUIDANCE } from "./prompt.js";
+import { isVagueRequest } from "./intent.js";
 import { createApprovalGuard, createTddGuard } from "./guardrails.js";
 import type {
   ApprovalDecision,
@@ -137,6 +138,13 @@ export interface AgentOptions {
    * runs and inspect/transform its result afterward. Run in array order.
    */
   guardrails?: Guardrail[];
+  /**
+   * Auto intent-clarification. When true, each run's user input is checked by a
+   * cheap heuristic; if it looks clearly vague, clarification guidance is
+   * appended to the system prompt for that run only, nudging the model to lead
+   * with a single clarifying question. Off for specific requests (zero cost).
+   */
+  autoClarify?: boolean;
 }
 
 export interface RunResult {
@@ -180,6 +188,10 @@ export class Agent {
   private scratchpad: Scratchpad;
   /** Set when restart_self is invoked during a run. */
   private pendingRestart?: { reason: string };
+  /** When true, apply the vagueness heuristic to each run's user input. */
+  private autoClarify: boolean;
+  /** True only for the duration of a run whose input was flagged vague. */
+  private clarifyActive = false;
 
   constructor(opts: AgentOptions) {
     this.provider = opts.provider;
@@ -198,6 +210,7 @@ export class Agent {
     this.memoryFile = opts.memoryFile;
     this.subagentDepth = opts.subagentDepth ?? 0;
     this.maxSubagentDepth = opts.maxSubagentDepth ?? 1;
+    this.autoClarify = opts.autoClarify ?? false;
     // Unified lifecycle-hook chain: TDD gate (if enabled) runs first, then any
     // user-supplied guardrails (e.g. oscillation), and finally the approval
     // gate so we only prompt for calls that passed the earlier policy checks.
@@ -220,10 +233,19 @@ export class Agent {
     }
   }
 
-  /** System prompt = base prompt + the pinned scratchpad block (if enabled). */
+  /**
+   * System prompt = base prompt + the pinned scratchpad block (if enabled) +
+   * transient clarification guidance (only while a vague run is in flight).
+   */
   private renderSystemPrompt(): string {
-    if (!this.toolMap.has("update_scratchpad")) return this.baseSystemPrompt;
-    return this.baseSystemPrompt + renderScratchpadBlock(this.scratchpad);
+    let prompt = this.baseSystemPrompt;
+    if (this.toolMap.has("update_scratchpad")) {
+      prompt += renderScratchpadBlock(this.scratchpad);
+    }
+    if (this.clarifyActive) {
+      prompt += `\n\n${CLARIFY_GUIDANCE}`;
+    }
+    return prompt;
   }
 
   /** Re-render messages[0] after the scratchpad changes. */
@@ -280,6 +302,26 @@ export class Agent {
   ): Promise<RunResult> {
     this.messages.push({ role: "user", content: userInput });
 
+    // Auto intent-clarification: only for this run, and only when the input
+    // looks clearly vague. Appended to the system prompt via renderSystemPrompt.
+    if (this.autoClarify && isVagueRequest(userInput)) {
+      this.clarifyActive = true;
+      this.syncSystemPrompt();
+    }
+    try {
+      return await this.runLoop(callbacks, signal);
+    } finally {
+      if (this.clarifyActive) {
+        this.clarifyActive = false;
+        this.syncSystemPrompt();
+      }
+    }
+  }
+
+  private async runLoop(
+    callbacks: AgentCallbacks = {},
+    signal?: AbortSignal,
+  ): Promise<RunResult> {
     const ctx: ToolContext = {
       workspaceRoot: this.workspaceRoot,
       signal,

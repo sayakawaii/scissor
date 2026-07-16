@@ -169,11 +169,20 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
   const approvalPolicy = opts.resume?.approvalPolicy ?? opts.approvalPolicy ?? "plan-gate";
   const selfEdit = opts.selfEdit ?? false;
   const tdd = opts.tdd ?? config.tddMode ?? false;
-  const clarify =
-    opts.clarify ??
-    (process.env.SCISSOR_CLARIFY === "1" ? true : undefined) ??
-    config.clarifyIntent ??
-    false;
+  // Clarification has three modes. Default is "auto": a cheap heuristic flags
+  // clearly-vague inputs per request and the agent injects the guidance only
+  // then. "--clarify" (or config/env) forces it on for every request; the
+  // guidance is baked into the system prompt. SCISSOR_NO_CLARIFY=1 turns it off.
+  const clarifyForced =
+    opts.clarify === true ||
+    process.env.SCISSOR_CLARIFY === "1" ||
+    config.clarifyIntent === true;
+  const clarifyDisabled = opts.clarify === false || process.env.SCISSOR_NO_CLARIFY === "1";
+  const clarifyMode: "off" | "auto" | "always" = clarifyDisabled
+    ? "off"
+    : clarifyForced
+      ? "always"
+      : "auto";
 
   const memory = await readMemory(workspaceRoot);
   const repoMap = await buildRepoMap(workspaceRoot).catch(() => "");
@@ -185,7 +194,7 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     repoMap,
     selfEdit,
     tdd,
-    clarify,
+    clarify: clarifyMode === "always",
   });
 
   // Verification closed-loop applies only when the agent can edit files.
@@ -209,6 +218,7 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     tddMode: tdd,
     initialScratchpad: opts.resume?.scratchpad,
     guardrails: [createOscillationGuard()],
+    autoClarify: clarifyMode === "auto",
   });
 
   const now = new Date().toISOString();

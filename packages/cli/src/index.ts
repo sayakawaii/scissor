@@ -88,7 +88,7 @@ program
   .option("--no-verify", "disable the automated verification closed-loop")
   .option("--no-mcp", "do not connect configured MCP servers this session")
   .option("--tdd", "enforce test-first coding (block source edits until a test exists)")
-  .option("--clarify", "lead clearly ambiguous requests with a clarifying question")
+  .option("--clarify", "force intent-clarification on every request (default: auto-detect vague ones)")
   .option("--router", "route each turn to a cheap/strong model tier by difficulty")
   .option("--trace", "write a structured JSONL trace of the session to ~/.scissor/traces")
   .option("--resume <id>", "resume a saved session by id or file path")

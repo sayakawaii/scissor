@@ -190,7 +190,7 @@ Options:
 - `--no-verify` — disable the automated verification closed-loop
 - `--router` — route each turn to a cheap/strong model tier by difficulty
 - `--tdd` — enforce test-first coding (block source edits until a test exists)
-- `--clarify` — lead clearly ambiguous requests with a clarifying question before planning
+- `--clarify` — force intent-clarification on every request (default: auto-detect vague ones; `SCISSOR_NO_CLARIFY=1` to disable)
 - `--trace` — write a structured JSONL trace of the session to `~/.scissor/traces`
 
 REPL slash commands: `/help`, `/reset`, `/compact`, `/scratchpad`, `/remember <fact>`, `/info`, `/exit`.
@@ -214,14 +214,27 @@ merging/ranking is the tool's.)
 
 ## Intent clarification
 
-Opt in with `--clarify` (or `"clarifyIntent": true` in `~/.scissor/config.json`,
-or `SCISSOR_CLARIFY=1`). When enabled, if a request is clearly ambiguous or
-underspecified — vague verbs like "improve it", no concrete target, or several
-very different plausible readings — the agent's **first** action is a single
-`ask_user` offering 2–3 concrete interpretations (plus an "other" path) before it
-plans or edits. It treats likely typos charitably (surfacing its best reading as
-an option) and asks at most one round; specific requests proceed without a gate.
-This trades a quick question for far less wasted work on the wrong interpretation.
+When a request is clearly ambiguous or underspecified — vague verbs like
+"improve it", no concrete target, or several very different plausible readings —
+the agent's **first** action is a single `ask_user` offering 2–3 concrete
+interpretations (plus an "other" path) before it plans or edits. It treats likely
+typos charitably (surfacing its best reading as an option) and asks at most one
+round. This trades a quick question for far less wasted work on the wrong path.
+
+Three modes (default **auto**):
+
+- **auto** (default) — a cheap, deterministic heuristic (`isVagueRequest`) checks
+  each request; only *clearly vague* ones get the clarification nudge, injected
+  into the system prompt for that turn only. Specific requests are never gated and
+  pay zero cost. You don't manage a switch.
+- **always** — `--clarify` (or `"clarifyIntent": true` in config, or
+  `SCISSOR_CLARIFY=1`) bakes the guidance into every request; the model still
+  self-judges whether a given request actually needs a question.
+- **off** — `SCISSOR_NO_CLARIFY=1` disables it entirely.
+
+The heuristic is precision-biased: it fires only when a vague marker is present
+*and* no concrete target (file path, identifier, code fence, URL) is mentioned,
+*and* the request is short — so it errs toward staying quiet.
 
 ## Verification closed-loop
 

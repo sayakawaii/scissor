@@ -28,15 +28,20 @@ needs to proactively surface the right context.
 
 ### Intent recognition / clarification
 
-- [x] Intent-clarification gate (`--clarify` / `clarifyIntent` config /
-  `SCISSOR_CLARIFY=1`): for clearly ambiguous requests, the agent leads with a
-  single `ask_user` offering 2–3 concrete interpretations before planning/editing,
-  and treats likely typos charitably. Prompt-driven (no brittle heuristic
-  classifier), off by default, at most one round. (`buildSystemPrompt` clarify
-  block in `packages/core/src/prompt.ts`; covered by `scripts/test-clarify.mts`)
+- [x] Intent-clarification gate: for clearly ambiguous requests the agent leads
+  with a single `ask_user` offering 2–3 concrete interpretations before
+  planning/editing, treating likely typos charitably. Three modes, default
+  **auto**: a deterministic vagueness heuristic (`isVagueRequest`, precision-
+  biased) fires per request and the agent injects the guidance for that turn
+  only; `--clarify`/`clarifyIntent`/`SCISSOR_CLARIFY=1` force it always;
+  `SCISSOR_NO_CLARIFY=1` disables. No LLM classifier, no per-turn cost when
+  quiet. (`packages/core/src/intent.ts` + `CLARIFY_GUIDANCE`/`autoClarify`;
+  covered by `scripts/test-intent.mts` + `scripts/test-clarify.mts`)
 - [ ] Make the gate a hard guardrail (block the first plan/edit until an
-  `ask_user` fired) when a lightweight vagueness signal is present, instead of
-  relying purely on prompt adherence.
+  `ask_user` fired) when the vagueness heuristic fires, instead of relying on
+  prompt adherence. Reuse `isVagueRequest`.
+- [ ] Broaden the heuristic (more vague markers / multilingual) and/or tune it
+  against real traced sessions to catch misses without adding false positives.
 
 ## 2. Edit reliability ("apply")
 
