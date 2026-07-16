@@ -89,8 +89,8 @@ program
   .option("--no-mcp", "do not connect configured MCP servers this session")
   .option("--tdd", "enforce test-first coding (block source edits until a test exists)")
   .option("--clarify", "force intent-clarification on every request (default: auto-detect vague ones)")
-  .option("--router", "route each turn to a cheap/strong model tier by difficulty")
-  .option("--trace", "write a structured JSONL trace of the session to ~/.scissor/traces")
+  .option("--router", "force cheap/strong model routing (default: auto when a strong-tier key exists; SCISSOR_NO_ROUTER=1 to disable)")
+  .option("--trace", "write a session trace (default: on; SCISSOR_NO_TRACE=1 to disable, SCISSOR_TRACE_KEEP=N to cap retention)")
   .option("--resume <id>", "resume a saved session by id or file path")
   .argument("[prompt...]", "prompt to run once, then exit (omit for interactive mode)")
   .action(async (promptParts: string[], opts: GlobalOpts) => {

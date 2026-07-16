@@ -196,6 +196,22 @@ export function resolveRouterTiers(
   };
 }
 
+/**
+ * Whether enabling the router would actually change behavior for `baseProvider`:
+ * the strong tier must have a usable API key AND resolve to a different
+ * provider/model than the cheap tier. Lets the session auto-enable routing only
+ * when it helps, so the user never has to flip a flag for the common case.
+ */
+export function routerWouldHelp(config: ScissorConfig, baseProvider: ProviderId): boolean {
+  const tiers = resolveRouterTiers(config, baseProvider);
+  const strongKey = config.providers[tiers.strong.provider]?.apiKey?.trim();
+  if (!strongKey) return false;
+  return (
+    tiers.strong.provider !== tiers.cheap.provider ||
+    tiers.strong.model !== tiers.cheap.model
+  );
+}
+
 function normalizeConfig(parsed: Partial<ScissorConfig>): ScissorConfig {
   const defaultProvider =
     parsed.defaultProvider && PROVIDER_IDS.includes(parsed.defaultProvider)

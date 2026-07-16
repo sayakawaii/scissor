@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createTracer } from "../packages/cli/src/trace.js";
+import { createTracer, pruneTraces } from "../packages/cli/src/trace.js";
 
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), "scissor-trace-"));
 const file = path.join(dir, "sub", "session.jsonl"); // nested dir must be created
@@ -64,6 +64,37 @@ assert.equal(route.score, 3);
 
 const usage = events.find((e) => e.type === "usage")!;
 assert.equal(usage.totalTokens, 15);
+
+// --- pruneTraces keeps the N most-recent traces ---
+{
+  const pdir = await fs.mkdtemp(path.join(os.tmpdir(), "scissor-prune-"));
+  // Create 5 trace files with strictly increasing mtimes (old -> new).
+  const names = ["a", "b", "c", "d", "e"];
+  const base = Date.now() - 10_000;
+  for (let i = 0; i < names.length; i++) {
+    const p = path.join(pdir, `${names[i]}.jsonl`);
+    await fs.writeFile(p, "{}\n", "utf8");
+    const t = new Date(base + i * 1000);
+    await fs.utimes(p, t, t);
+  }
+  // A non-trace file must be left untouched.
+  await fs.writeFile(path.join(pdir, "keep.txt"), "x", "utf8");
+
+  pruneTraces(pdir, 2);
+  const left = (await fs.readdir(pdir)).sort();
+  assert.deepEqual(left, ["d.jsonl", "e.jsonl", "keep.txt"], "keeps 2 newest traces + non-trace file");
+
+  // keep >= count is a no-op; keep 0 removes all traces.
+  pruneTraces(pdir, 10);
+  assert.equal((await fs.readdir(pdir)).filter((f) => f.endsWith(".jsonl")).length, 2, "no-op when keep >= count");
+  pruneTraces(pdir, 0);
+  assert.equal((await fs.readdir(pdir)).filter((f) => f.endsWith(".jsonl")).length, 0, "keep 0 clears traces");
+
+  // Missing directory: best-effort, no throw.
+  pruneTraces(path.join(pdir, "does-not-exist"), 5);
+
+  await fs.rm(pdir, { recursive: true, force: true }).catch(() => {});
+}
 
 await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
 

@@ -169,14 +169,18 @@ Long-term memory is `SCISSOR_MEMORY.md` (durable facts) + saved sessions. Gaps:
 ## 6. Provider/model robustness
 
 - [x] Heuristic model router: score each turn and route to a cheap or strong
-  model tier (opt-in via `--router` / config `router.enabled`). Escalates on
+  model tier. **Auto by default** — enabled when it would help (strong tier has a
+  key and a distinct model; `routerWouldHelp` in `config.ts`); `--router`/
+  `router.enabled` force it on, `SCISSOR_NO_ROUTER=1` off. Escalates on
   complex-intent keywords, large context, long-running turns, and failed
   verification; degrades gracefully when the strong tier has no key. Validate
   with `scissor eval --router`. (`packages/core/src/providers/router.ts`,
-  `resolveRouterTiers` in `config.ts`, `createRoutedProvider`.)
-- [x] Structured JSONL tracing (`--trace` / `SCISSOR_TRACE=1`): per-session
-  events (turn, route, tool timing, usage, verify, compact, subagent) written to
-  `~/.scissor/traces/<id>.jsonl` for observability. (`packages/cli/src/trace.ts`)
+  `resolveRouterTiers`/`routerWouldHelp` in `config.ts`, `createRoutedProvider`.)
+- [x] Structured JSONL tracing: per-session events (turn, route, tool timing,
+  usage, verify, compact, subagent) written to `~/.scissor/traces/<id>.jsonl`.
+  **On by default** (costs only disk, feeds the trace→eval flywheel), self-
+  limiting to the newest `SCISSOR_TRACE_KEEP` traces (default 50, `pruneTraces`);
+  `SCISSOR_NO_TRACE=1` disables. (`packages/cli/src/trace.ts`)
 - Retries with backoff on 429/5xx and transient network errors.
 - Streaming reasoning display for reasoning models (e.g. deepseek-reasoner).
 - [x] Token accounting + cost estimate per turn/session: `scissor trace`

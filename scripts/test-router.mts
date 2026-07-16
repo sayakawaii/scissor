@@ -14,6 +14,7 @@ import {
   createRoutedProvider,
   DEFAULT_ROUTE_THRESHOLD,
   resolveRouterTiers,
+  routerWouldHelp,
   RouterProvider,
   routeTurn,
   type ChatParams,
@@ -209,6 +210,49 @@ const T = DEFAULT_ROUTE_THRESHOLD;
   assert.equal(routed.degraded, false);
   assert.ok(routed.provider instanceof RouterProvider);
   assert.match(routed.label, /deepseek-chat \| deepseek:deepseek-reasoner/);
+}
+
+// 12. routerWouldHelp drives auto-enable: on when the strong tier has a key AND
+//     resolves to a distinct model; off otherwise.
+{
+  // deepseek: cheap chat vs strong reasoner, key present -> helps.
+  assert.equal(
+    routerWouldHelp({ defaultProvider: "deepseek", providers: { deepseek: { apiKey: "x" } } }, "deepseek"),
+    true,
+    "deepseek chat/reasoner with key -> auto-on",
+  );
+  // gpt: premium model equals the default (gpt-4o) -> no distinct tier -> off.
+  assert.equal(
+    routerWouldHelp({ defaultProvider: "gpt", providers: { gpt: { apiKey: "x" } } }, "gpt"),
+    false,
+    "gpt has no distinct strong tier -> auto-off",
+  );
+  // deepseek base but strong tier routed to claude without a key -> off.
+  assert.equal(
+    routerWouldHelp(
+      {
+        defaultProvider: "deepseek",
+        providers: { deepseek: { apiKey: "x" } },
+        router: { strong: { provider: "claude" } },
+      },
+      "deepseek",
+    ),
+    false,
+    "strong tier without key -> auto-off",
+  );
+  // deepseek base, strong claude WITH a key -> distinct + keyed -> on.
+  assert.equal(
+    routerWouldHelp(
+      {
+        defaultProvider: "deepseek",
+        providers: { deepseek: { apiKey: "x" }, claude: { apiKey: "y" } },
+        router: { strong: { provider: "claude" } },
+      },
+      "deepseek",
+    ),
+    true,
+    "cross-provider strong tier with key -> auto-on",
+  );
 }
 
 process.stdout.write("test-router: ALL PASS\n");

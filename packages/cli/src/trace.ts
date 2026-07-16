@@ -26,6 +26,38 @@ export interface Tracer {
   close(): void;
 }
 
+/**
+ * Keep only the `keep` most recently modified *.jsonl traces in `dir`, deleting
+ * older ones. Best-effort and never throws — trace retention must not break a
+ * run. Called on session start so default-on tracing can't grow unbounded.
+ */
+export function pruneTraces(dir: string, keep: number): void {
+  if (keep < 0) return;
+  try {
+    const entries = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .map((f) => {
+        const p = path.join(dir, f);
+        try {
+          return { p, m: fs.statSync(p).mtimeMs };
+        } catch {
+          return { p, m: 0 };
+        }
+      })
+      .sort((a, b) => b.m - a.m);
+    for (const { p } of entries.slice(keep)) {
+      try {
+        fs.unlinkSync(p);
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    /* dir may not exist yet; nothing to prune */
+  }
+}
+
 export function createTracer(filePath: string): Tracer {
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });

@@ -191,7 +191,7 @@ Options:
 - `--router` — route each turn to a cheap/strong model tier by difficulty
 - `--tdd` — enforce test-first coding (block source edits until a test exists)
 - `--clarify` — force intent-clarification on every request (default: auto-detect vague ones; `SCISSOR_NO_CLARIFY=1` to disable)
-- `--trace` — write a structured JSONL trace of the session to `~/.scissor/traces`
+- `--trace` — session tracing is on by default; `SCISSOR_NO_TRACE=1` disables it, `SCISSOR_TRACE_KEEP=N` caps retention (default 50)
 
 REPL slash commands: `/help`, `/reset`, `/compact`, `/scratchpad`, `/remember <fact>`, `/info`, `/exit`.
 
@@ -259,11 +259,18 @@ it elsewhere with the `SCISSOR_DIAGNOSTICS_COMMAND` env var.
 
 ## Model router (token efficiency)
 
-Enable with `--router` (or `router.enabled` in config). Each turn is scored for
-difficulty and sent to a **cheap** tier by default, escalating to a **strong**
-tier only when the turn looks hard — so you spend premium tokens only where they
-matter. The routing is transparent (explainable signals, not a black-box model);
-strong-tier turns log a one-line reason to stderr.
+Routing is **auto by default**: it turns on when it would actually help — i.e. the
+strong tier has an API key and resolves to a *distinct* model from the cheap tier
+(true out of the box for DeepSeek: `deepseek-chat` → `deepseek-reasoner`). If
+there's no distinct/keyed strong tier (e.g. a lone GPT key), it stays off so
+nothing changes. Force it on with `--router` (or `router.enabled` in config);
+turn it off with `SCISSOR_NO_ROUTER=1`.
+
+Each turn is scored for difficulty and sent to a **cheap** tier by default,
+escalating to a **strong** tier only when the turn looks hard — so you spend
+premium tokens only where they matter. The routing is transparent (explainable
+signals, not a black-box model); strong-tier turns log a one-line reason to
+stderr.
 
 Signals (weights): a complex-intent keyword such as *refactor/debug/architecture/
 优化/并发* (+3), a failed verification on the previous turn (+3), large context
@@ -404,13 +411,16 @@ to clear per-session state.
 
 ## Tracing (observability)
 
-Run with `--trace` (or `SCISSOR_TRACE=1`) to append a structured **JSONL** trace
-of the session to `~/.scissor/traces/<session-id>.jsonl` — one JSON object per
-event: `session-start`, `turn`, `route` (which model tier was chosen and why),
-`tool` (name, ok, duration ms), `usage` (tokens), `verify`, `compact`,
-`subagent`, and `session-end`. It's off by default, best-effort (never breaks a
-run), and useful for debugging behavior, measuring tool timings, and tuning the
-router threshold / tracking token spend. Inspect it with any JSONL tool, e.g.:
+Every session appends a structured **JSONL** trace to
+`~/.scissor/traces/<session-id>.jsonl` — one JSON object per event:
+`session-start`, `turn`, `route` (which model tier was chosen and why), `tool`
+(name, ok, duration ms), `usage` (tokens), `verify`, `compact`, `subagent`, and
+`session-end`. Tracing is **on by default** (it costs only disk and feeds the
+trace → eval flywheel), best-effort (never breaks a run), and self-limiting: only
+the newest `SCISSOR_TRACE_KEEP` traces are kept (default 50). Disable per-run with
+`SCISSOR_NO_TRACE=1`. It's useful for debugging behavior, measuring tool timings,
+and tuning the router threshold / tracking token spend. Inspect it with any JSONL
+tool, e.g.:
 
 ```bash
 scissor --trace "refactor the parser"

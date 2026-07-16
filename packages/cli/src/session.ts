@@ -17,6 +17,7 @@ import {
   MissingApiKeyError,
   newSessionId,
   resolveModel,
+  routerWouldHelp,
   saveSession,
   type ApprovalPolicy,
   type LLMProvider,
@@ -26,7 +27,10 @@ import {
   type Tool,
 } from "@scissor/core";
 import { makeVerifier } from "./verify-project.js";
-import { createTracer, type Tracer } from "./trace.js";
+import { createTracer, pruneTraces, type Tracer } from "./trace.js";
+
+/** How many session traces to keep by default (override: SCISSOR_TRACE_KEEP). */
+const DEFAULT_TRACE_KEEP = 50;
 import {
   banner,
   formatToolCallHeader,
@@ -104,10 +108,11 @@ async function connectMcp(
 }
 
 /**
- * Build the LLM provider for a session, honoring the heuristic router. The
- * router is opt-in: enabled by --router (opts.router), config.router.enabled, or
- * off. SCISSOR_NO_ROUTER=1 force-disables it. Returns the provider plus a model
- * label for display/persistence.
+ * Build the LLM provider for a session, honoring the heuristic router. Routing
+ * is now **auto** by default: it turns on when it would actually help (the
+ * strong tier has a key and resolves to a distinct model), and stays off
+ * otherwise, so the user needn't flip a flag. `--router`/config.router.enabled
+ * force it on; `SCISSOR_NO_ROUTER=1` (or opts.router===false) force it off.
  */
 function createProviderForSession(
   config: ScissorConfig,
@@ -115,8 +120,13 @@ function createProviderForSession(
   opts: SessionOptions,
   tracer?: Tracer,
 ): { provider: LLMProvider; model: string } {
-  let routerEnabled = opts.router ?? config.router?.enabled ?? false;
-  if (process.env.SCISSOR_NO_ROUTER === "1") routerEnabled = false;
+  const routerDisabled = opts.router === false || process.env.SCISSOR_NO_ROUTER === "1";
+  const routerForced = opts.router === true || config.router?.enabled === true;
+  const routerEnabled = routerDisabled
+    ? false
+    : routerForced
+      ? true
+      : routerWouldHelp(config, providerId);
 
   if (!routerEnabled) {
     return { provider: createProvider(config, providerId), model: resolveModel(config, providerId) };
@@ -160,10 +170,11 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
   const config = applyEnvOverrides(await loadConfig());
   const providerId = opts.resume?.provider ?? opts.provider ?? config.defaultProvider;
   const sessionId = opts.resume?.id ?? newSessionId();
-  const traceEnabled = opts.trace ?? process.env.SCISSOR_TRACE === "1";
-  const tracer = traceEnabled
-    ? createTracer(path.join(getConfigDir(), "traces", `${sessionId}.jsonl`))
-    : undefined;
+  // Tracing is on by default (it feeds the trace -> eval flywheel and costs only
+  // disk). Disable per-run with opts.trace===false or SCISSOR_NO_TRACE=1.
+  const traceEnabled = !(opts.trace === false || process.env.SCISSOR_NO_TRACE === "1");
+  const tracesDir = path.join(getConfigDir(), "traces");
+  const tracer = traceEnabled ? createTracer(path.join(tracesDir, `${sessionId}.jsonl`)) : undefined;
   const { provider, model } = createProviderForSession(config, providerId, opts, tracer);
   const workspaceRoot = opts.resume?.workspaceRoot ?? opts.workspaceRoot ?? process.cwd();
   const approvalPolicy = opts.resume?.approvalPolicy ?? opts.approvalPolicy ?? "plan-gate";
@@ -238,6 +249,9 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
 
   if (tracer) {
     tracer.record("session-start", { sessionId, provider: providerId, model, workspaceRoot });
+    // Cap retention so default-on tracing can't grow without bound.
+    const keep = Number.parseInt(process.env.SCISSOR_TRACE_KEEP ?? "", 10);
+    pruneTraces(tracesDir, Number.isFinite(keep) && keep > 0 ? keep : DEFAULT_TRACE_KEEP);
     process.stderr.write(theme.dim(`  trace: ${tracer.filePath}`) + "\n");
   }
 
