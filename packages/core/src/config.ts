@@ -35,6 +35,11 @@ export interface ScissorConfig {
   providers: Partial<Record<ProviderId, ProviderConfig>>;
   /** Default test-first (TDD) enforcement when not overridden by a CLI flag. */
   tddMode?: boolean;
+  /**
+   * Lead ambiguous requests with a clarifying question (2-3 concrete options)
+   * before planning. Off unless enabled; overridden per-session by --clarify.
+   */
+  clarifyIntent?: boolean;
   /** Heuristic model router (cheap/strong tiers). Off unless enabled. */
   router?: RouterConfig;
 }
@@ -200,6 +205,7 @@ function normalizeConfig(parsed: Partial<ScissorConfig>): ScissorConfig {
     defaultProvider,
     providers: parsed.providers ?? {},
     tddMode: parsed.tddMode === true ? true : undefined,
+    clarifyIntent: parsed.clarifyIntent === true ? true : undefined,
     router: parsed.router,
   };
 }

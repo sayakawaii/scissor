@@ -14,10 +14,29 @@ needs to proactively surface the right context.
 - [x] Cheap first version: heuristic retrieval (filename/path/keyword scoring)
   exposed as the `retrieve` tool. (`retrieve` in `repo-index.ts` + `tools/retrieve.ts`)
 - [x] Respect `.gitignore`.
+- [x] Query rewriting: `retrieve` accepts a `queries` array of normalized
+  phrasings (corrected spelling / identifier names / synonyms). All files are
+  scored against each phrasing in one pass; best match per file is kept. Lifts
+  recall for vague/misspelled requests. (`retrieveMulti` in `repo-index.ts` +
+  `tools/retrieve.ts`; covered by `scripts/test-retrieve.mts`)
 - [ ] Optional embedding index for semantic retrieval; rank chunks by relevance
   and inject the top-K into context automatically.
+- [ ] Fuzzy token matching (edit-distance) inside `retrieve` so a single typo'd
+  query still hits even without the model rewriting it.
 - [ ] Incremental re-index on file changes (the repo map is currently built once
   per session and can go stale after edits).
+
+### Intent recognition / clarification
+
+- [x] Intent-clarification gate (`--clarify` / `clarifyIntent` config /
+  `SCISSOR_CLARIFY=1`): for clearly ambiguous requests, the agent leads with a
+  single `ask_user` offering 2–3 concrete interpretations before planning/editing,
+  and treats likely typos charitably. Prompt-driven (no brittle heuristic
+  classifier), off by default, at most one round. (`buildSystemPrompt` clarify
+  block in `packages/core/src/prompt.ts`; covered by `scripts/test-clarify.mts`)
+- [ ] Make the gate a hard guardrail (block the first plan/edit until an
+  `ask_user` fired) when a lightweight vagueness signal is present, instead of
+  relying purely on prompt adherence.
 
 ## 2. Edit reliability ("apply")
 

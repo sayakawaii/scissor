@@ -27,6 +27,8 @@ export interface ChatOptions {
   noVerify?: boolean;
   /** Enforce test-first (TDD) coding. */
   tdd?: boolean;
+  /** Lead clearly ambiguous requests with a clarifying question. */
+  clarify?: boolean;
   /** Connect configured MCP servers. */
   mcp?: boolean;
   /** Enable the heuristic model router (cheap/strong tiers). */

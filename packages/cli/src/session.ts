@@ -63,6 +63,8 @@ export interface SessionOptions {
   noVerify?: boolean;
   /** Enforce test-first (TDD) coding: block source edits until a test exists. */
   tdd?: boolean;
+  /** Lead clearly ambiguous requests with a clarifying question before planning. */
+  clarify?: boolean;
   /** Connect configured MCP servers and expose their tools (interactive use). */
   mcp?: boolean;
   /** Enable the heuristic model router (cheap/strong tiers). */
@@ -167,6 +169,11 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
   const approvalPolicy = opts.resume?.approvalPolicy ?? opts.approvalPolicy ?? "plan-gate";
   const selfEdit = opts.selfEdit ?? false;
   const tdd = opts.tdd ?? config.tddMode ?? false;
+  const clarify =
+    opts.clarify ??
+    (process.env.SCISSOR_CLARIFY === "1" ? true : undefined) ??
+    config.clarifyIntent ??
+    false;
 
   const memory = await readMemory(workspaceRoot);
   const repoMap = await buildRepoMap(workspaceRoot).catch(() => "");
@@ -178,6 +185,7 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     repoMap,
     selfEdit,
     tdd,
+    clarify,
   });
 
   // Verification closed-loop applies only when the agent can edit files.

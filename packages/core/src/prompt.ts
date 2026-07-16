@@ -10,6 +10,8 @@ export interface PromptContext {
   selfEdit?: boolean;
   /** When true, enforce a test-first (TDD) workflow. */
   tdd?: boolean;
+  /** When true, lead clearly ambiguous requests with a clarifying question. */
+  clarify?: boolean;
 }
 
 /** Build the system prompt that governs scissor's agent behavior. */
@@ -39,6 +41,16 @@ export function buildSystemPrompt(ctx: PromptContext): string {
         `- Before writing or editing source code, FIRST write a test that specifies the desired behavior (a *.test.* file or a file under tests/).`,
         `- Run the test to confirm it fails for the right reason (red), then implement the minimal code to make it pass (green), then refactor.`,
         `- The environment enforces this: attempts to edit a source file before any test file has been created/edited this session are rejected.`,
+      ]
+    : [];
+
+  const clarifyGuidance = ctx.clarify
+    ? [
+        ``,
+        `INTENT CLARIFICATION is ENABLED:`,
+        `- If the request is clearly ambiguous or underspecified (vague verbs like "improve/fix it", no concrete target, or plausibly several very different interpretations), your FIRST action must be a single ask_user call offering 2-3 concrete interpretations as options (include an "other" path), BEFORE present_plan or any edit.`,
+        `- Treat likely typos and shorthand charitably: state your best reading of the request as one of the options rather than guessing silently.`,
+        `- Do NOT clarify when the request is already specific enough to act on; ask at most one round, then proceed. Never ask about trivial details you can decide yourself.`,
       ]
     : [];
 
@@ -83,6 +95,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     `- Use paths relative to the workspace root.`,
     ``,
     `When you have fully addressed the request, stop calling tools and give a concise final summary of what you did.`,
+    ...clarifyGuidance,
     ...tddGuidance,
     ...selfEditGuidance,
     ...repoMapBlock,

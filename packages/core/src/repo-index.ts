@@ -193,9 +193,28 @@ export async function retrieve(
   query: string,
   opts: { k?: number; maxFilesScanned?: number } = {},
 ): Promise<RetrieveResult[]> {
+  return retrieveMulti(root, [query], opts);
+}
+
+/**
+ * Multi-query retrieval: the caller (the model) rewrites a vague or typo-ridden
+ * request into several normalized phrasings/keyword sets; we score every file
+ * against each phrasing in a single pass and keep the *best* score per file, so
+ * a file that strongly matches any one phrasing still surfaces. This lifts recall
+ * for "where is X handled" questions without any embedding index.
+ */
+export async function retrieveMulti(
+  root: string,
+  queries: string[],
+  opts: { k?: number; maxFilesScanned?: number } = {},
+): Promise<RetrieveResult[]> {
   const k = opts.k ?? 8;
-  const tokens = tokenize(query);
-  if (tokens.length === 0) return [];
+  const tokenSets = queries
+    .map((q) => tokenize(q))
+    .filter((t) => t.length > 0);
+  if (tokenSets.length === 0) return [];
+  // Union of all query tokens, used for snippet selection.
+  const allTokens = [...new Set(tokenSets.flat())];
   const files = await listSourceFiles(root, opts.maxFilesScanned ?? 3000);
 
   const scored: RetrieveResult[] = [];
@@ -212,13 +231,18 @@ export async function retrieve(
     const lower = content.toLowerCase();
     const pathLower = rel.toLowerCase();
 
-    let score = 0;
-    for (const tok of tokens) {
-      const inContent = countOccurrences(lower, tok);
-      const inPath = countOccurrences(pathLower, tok);
-      score += inContent + inPath * 5;
+    // Score each phrasing independently; keep the strongest match.
+    let best = 0;
+    for (const tokens of tokenSets) {
+      let score = 0;
+      for (const tok of tokens) {
+        const inContent = countOccurrences(lower, tok);
+        const inPath = countOccurrences(pathLower, tok);
+        score += inContent + inPath * 5;
+      }
+      if (score > best) best = score;
     }
-    if (score <= 0) continue;
+    if (best <= 0) continue;
 
     // Find the best matching lines (those hitting the most distinct tokens).
     const contentLines = content.split("\n");
@@ -226,14 +250,14 @@ export async function retrieve(
     for (let i = 0; i < contentLines.length; i++) {
       const ll = (contentLines[i] ?? "").toLowerCase();
       let hits = 0;
-      for (const tok of tokens) if (ll.includes(tok)) hits++;
+      for (const tok of allTokens) if (ll.includes(tok)) hits++;
       if (hits > 0) {
         lineHits.push({ line: i + 1, text: (contentLines[i] ?? "").trim(), hits });
       }
     }
     lineHits.sort((a, b) => b.hits - a.hits || a.line - b.line);
     const snippets = lineHits.slice(0, 3).map((l) => ({ line: l.line, text: l.text.slice(0, 200) }));
-    scored.push({ file: rel, score, snippets });
+    scored.push({ file: rel, score: best, snippets });
   }
 
   scored.sort((a, b) => b.score - a.score);

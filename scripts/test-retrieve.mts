@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildRepoMap, retrieve, listSourceFiles } from "@scissor/core";
+import { buildRepoMap, retrieve, retrieveMulti, listSourceFiles, retrieveTool } from "@scissor/core";
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), "scissor-idx-"));
 
@@ -53,6 +53,43 @@ assert.ok(
   results[0]!.snippets.some((s) => /api|config/i.test(s.text)),
   "returns matching snippet",
 );
+
+// --- multi-query (query rewrite) recall ---
+// "authentication" alone never appears in the source; loginUser lives in auth.ts.
+// A single vague query misses it; a rewritten set of phrasings recovers the file.
+const single = await retrieveMulti(root, ["authentication feature"]);
+assert.ok(
+  !single.some((r) => r.file === "src/auth.ts"),
+  "vague single query does not surface auth.ts",
+);
+const multi = await retrieveMulti(root, ["authentication feature", "loginUser"]);
+assert.ok(
+  multi.some((r) => r.file === "src/auth.ts"),
+  "rewritten queries recover auth.ts",
+);
+
+// Merge keeps the best score per file and dedupes files.
+const merged = await retrieveMulti(root, ["loadConfig", "apiKey config"]);
+const configHits = merged.filter((r) => r.file === "src/config.ts");
+assert.equal(configHits.length, 1, "merged results dedupe files");
+assert.ok(configHits[0]!.score > 0, "merged file keeps a positive score");
+
+// retrieve() is a thin wrapper over the single-query path (unchanged behavior).
+const viaWrapper = await retrieve(root, "loadConfig");
+assert.equal(viaWrapper[0]?.file, "src/config.ts", "retrieve wrapper still ranks config.ts");
+
+// --- retrieve tool accepts a `queries` array ---
+const toolCtx = { workspaceRoot: root } as Parameters<typeof retrieveTool.run>[1];
+const toolRes = await retrieveTool.run(
+  { queries: ["authentication feature", "loginUser"] },
+  toolCtx,
+);
+assert.ok(!toolRes.isError, "tool accepts queries array");
+assert.match(String(toolRes.content), /auth\.ts/, "tool surfaces auth.ts from rewritten queries");
+
+// Empty input is a clean error, not a throw.
+const emptyRes = await retrieveTool.run({}, toolCtx);
+assert.ok(emptyRes.isError, "tool errors when neither query nor queries provided");
 
 await fs.rm(root, { recursive: true, force: true }).catch(() => {});
 process.stdout.write("\x1b[32mtest-retrieve: ALL PASS\x1b[0m\n");

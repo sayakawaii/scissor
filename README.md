@@ -190,6 +190,7 @@ Options:
 - `--no-verify` — disable the automated verification closed-loop
 - `--router` — route each turn to a cheap/strong model tier by difficulty
 - `--tdd` — enforce test-first coding (block source edits until a test exists)
+- `--clarify` — lead clearly ambiguous requests with a clarifying question before planning
 - `--trace` — write a structured JSONL trace of the session to `~/.scissor/traces`
 
 REPL slash commands: `/help`, `/reset`, `/compact`, `/scratchpad`, `/remember <fact>`, `/info`, `/exit`.
@@ -202,6 +203,25 @@ agent begins with an overview instead of blindly grepping. It also has a
 `retrieve` tool: ranked keyword search across the workspace that returns the most
 relevant files and matching lines for a natural-language query — better than a
 single `grep` for "where is X handled" questions.
+
+**Query rewriting.** When the user's wording is vague, abbreviated, or misspelled,
+the model rewrites it: `retrieve` accepts a `queries` array of 2–4 normalized
+phrasings (corrected spelling, likely identifier names, synonyms). Every file is
+scored against each phrasing in one pass and the *best* match per file is kept, so
+a file that matches any one phrasing still surfaces. This lifts recall for "where
+is X" questions without an embedding index. (Language rewriting is the model's job;
+merging/ranking is the tool's.)
+
+## Intent clarification
+
+Opt in with `--clarify` (or `"clarifyIntent": true` in `~/.scissor/config.json`,
+or `SCISSOR_CLARIFY=1`). When enabled, if a request is clearly ambiguous or
+underspecified — vague verbs like "improve it", no concrete target, or several
+very different plausible readings — the agent's **first** action is a single
+`ask_user` offering 2–3 concrete interpretations (plus an "other" path) before it
+plans or edits. It treats likely typos charitably (surfacing its best reading as
+an option) and asks at most one round; specific requests proceed without a gate.
+This trades a quick question for far less wasted work on the wrong interpretation.
 
 ## Verification closed-loop
 

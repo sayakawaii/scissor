@@ -34,6 +34,8 @@ interface GlobalOpts {
   mcp?: boolean;
   /** Enforce test-first (TDD) coding. */
   tdd?: boolean;
+  /** Lead clearly ambiguous requests with a clarifying question. */
+  clarify?: boolean;
   /** Enable the heuristic model router. */
   router?: boolean;
   /** Write a structured JSONL trace of the session. */
@@ -64,6 +66,8 @@ function toChatOptions(opts: GlobalOpts): ChatOptions {
     noVerify: opts.verify === false,
     // undefined when the flag is absent, so config.tddMode can still enable it.
     tdd: opts.tdd === true ? true : undefined,
+    // undefined when absent, so config.clarifyIntent can still enable it.
+    clarify: opts.clarify === true ? true : undefined,
     mcp: opts.mcp !== false,
     // undefined when absent, so config.router.enabled can still enable it.
     router: opts.router === true ? true : undefined,
@@ -84,6 +88,7 @@ program
   .option("--no-verify", "disable the automated verification closed-loop")
   .option("--no-mcp", "do not connect configured MCP servers this session")
   .option("--tdd", "enforce test-first coding (block source edits until a test exists)")
+  .option("--clarify", "lead clearly ambiguous requests with a clarifying question")
   .option("--router", "route each turn to a cheap/strong model tier by difficulty")
   .option("--trace", "write a structured JSONL trace of the session to ~/.scissor/traces")
   .option("--resume <id>", "resume a saved session by id or file path")
