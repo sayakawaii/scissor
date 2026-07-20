@@ -2,32 +2,49 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
   Agent,
+  adviseOptions,
   applyEnvOverrides,
   buildRepoMap,
+  bucketWorkspaceSize,
   buildSystemPrompt,
   createProvider,
   createRoutedProvider,
+  createExperienceRouterGuard,
   defaultTools,
   chatTools,
   createOscillationGuard,
+  EXPERIENCE_SCHEMA_VERSION,
   getConfigDir,
+  listWorkspaceFiles,
+  renderAdviceForPrompt,
   loadConfig,
   loadMcpConfig,
   McpManager,
   MissingApiKeyError,
   newSessionId,
+  normalizeErrorSignature,
   resolveModel,
   routerWouldHelp,
   saveSession,
+  type ApprovalDecision,
   type ApprovalPolicy,
+  type ExperienceTermination,
+  type Guardrail,
   type LLMProvider,
+  type PlanDecision,
   type ProviderId,
+  type RouteVerdict,
+  type RouterMode,
+  type RoutingRule,
   type ScissorConfig,
   type SessionData,
   type Tool,
+  type ToolCall,
+  type ToolPreview,
 } from "@scissor/core";
 import { makeVerifier } from "./verify-project.js";
 import { createTracer, pruneTraces, type Tracer } from "./trace.js";
+import { experienceReportFromDir } from "./experience-report.js";
 
 /** How many session traces to keep by default (override: SCISSOR_TRACE_KEEP). */
 const DEFAULT_TRACE_KEEP = 50;
@@ -165,6 +182,115 @@ async function readMemory(workspaceRoot: string): Promise<string | undefined> {
   }
 }
 
+/**
+ * Snapshot low-cardinality, secret-free workspace state features for the
+ * experience layer (doc §3.1). Everything here is coarse and stable — file
+ * *counts* not names, lockfile/manifest *presence* not contents — so it can
+ * never leak secrets and does not blow up statistical cardinality (doc §6).
+ */
+export async function snapshotWorkspaceState(
+  workspaceRoot: string,
+  extra: { approvalPolicy: ApprovalPolicy; tdd: boolean },
+): Promise<Record<string, string | number | boolean>> {
+  const has = async (rel: string): Promise<boolean> => {
+    try {
+      await fs.stat(path.join(workspaceRoot, rel));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  let pkg = "none";
+  if (await has("package-lock.json")) pkg = "npm";
+  else if (await has("pnpm-lock.yaml")) pkg = "pnpm";
+  else if (await has("yarn.lock")) pkg = "yarn";
+  else if (await has("bun.lockb")) pkg = "bun";
+
+  let lang = "unknown";
+  if (await has("package.json")) lang = "node";
+  else if ((await has("pyproject.toml")) || (await has("requirements.txt"))) lang = "python";
+  else if (await has("go.mod")) lang = "go";
+  else if (await has("Cargo.toml")) lang = "rust";
+  else if ((await has("pom.xml")) || (await has("build.gradle"))) lang = "jvm";
+
+  const vcs = (await has(".git")) ? "git" : "none";
+
+  let size = "unknown";
+  try {
+    const files = await listWorkspaceFiles(workspaceRoot, { sourceOnly: true, maxFiles: 2000 });
+    size = bucketWorkspaceSize(files.length);
+  } catch {
+    /* leave "unknown" */
+  }
+
+  return { lang, pkg, vcs, size, approval: extra.approvalPolicy, tdd: extra.tdd };
+}
+
+/**
+ * Classify a tool result's termination for the experience layer (doc §7 "数据污染"):
+ * a guardrail veto or a user rejection is NOT the tool's own capability failure
+ * and must be recorded distinctly so it is excluded from success statistics.
+ * Detection keys off the well-known result strings synthesized by the guardrail
+ * pipeline (see createApprovalGuard / handleToolCall in core).
+ */
+function classifyTermination(
+  content: string | undefined,
+  isError: boolean | undefined,
+): ExperienceTermination {
+  const c = (content ?? "").trimStart();
+  if (c.startsWith("Blocked by guardrail")) return "guardrail";
+  if (c.startsWith("User rejected this action")) return "cancelled";
+  return isError ? "failure" : "success";
+}
+
+/**
+ * Record a normalized `tool` trace event (doc §6): success flag, duration, a
+ * termination reason, an edited path, and — for genuine failures only — a
+ * secret-free error signature. Shared by the interactive callbacks and the
+ * eval/bench harness so both feed the experience layer identically. No-op when
+ * tracing is disabled. Requires a prior `tracer.toolStart(call.id)` for `ms`.
+ */
+export function recordToolEvent(
+  tracer: Tracer | undefined,
+  call: { id: string; name: string; arguments?: Record<string, unknown> },
+  result: { isError?: boolean; content?: string },
+): void {
+  if (!tracer) return;
+  const path =
+    (call.name === "write_file" || call.name === "edit_file") &&
+    typeof call.arguments?.path === "string"
+      ? call.arguments.path
+      : undefined;
+  const termination = classifyTermination(result.content, result.isError);
+  const errorSignature =
+    termination === "failure" ? normalizeErrorSignature(result.content) : undefined;
+  tracer.record("tool", {
+    name: call.name,
+    ok: !result.isError,
+    ms: tracer.toolMs(call.id),
+    termination,
+    ...(errorSignature ? { errorSignature } : {}),
+    ...(path ? { path } : {}),
+  });
+}
+
+/** Parse `SCISSOR_EXPERIENCE_ROUTE` into a router mode (off unless valid). */
+function parseRouteMode(env: string | undefined): RouterMode {
+  return env === "shadow" || env === "enforce" ? env : "off";
+}
+
+/** Parse `from>to,from>to` route rules from an env string (best-effort). */
+function parseRoutingRules(env: string | undefined): RoutingRule[] {
+  if (!env) return [];
+  const rules: RoutingRule[] = [];
+  for (const pair of env.split(",")) {
+    const [from, to] = pair.split(">").map((s) => s.trim());
+    if (from && to) rules.push({ from, to });
+  }
+  return rules;
+}
+
 /** Build an Agent from config, or throw a friendly error for the caller. */
 export async function createSession(opts: SessionOptions = {}): Promise<Session> {
   const config = applyEnvOverrides(await loadConfig());
@@ -197,6 +323,66 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
 
   const memory = await readMemory(workspaceRoot);
   const repoMap = await buildRepoMap(workspaceRoot).catch(() => "");
+
+  // Experience advisor (doc §5 Phase 3) and restricted auto-router (doc §5
+  // Phase 4) are BOTH opt-in and off by default, so default agent behavior and
+  // the eval gate are unchanged. Routing is additionally disabled in self-edit
+  // mode. When enabled we snapshot the workspace state once (reused by tracing),
+  // load the experience report once, and use it for advice and/or routing.
+  const adviceEnabled = process.env.SCISSOR_EXPERIENCE_ADVICE === "1";
+  const routeMode = parseRouteMode(process.env.SCISSOR_EXPERIENCE_ROUTE);
+  const routeEnabled = routeMode !== "off" && !selfEdit;
+
+  let stateSnapshot: Record<string, string | number | boolean> | undefined;
+  if (traceEnabled || adviceEnabled || routeEnabled) {
+    stateSnapshot = await snapshotWorkspaceState(workspaceRoot, { approvalPolicy, tdd });
+  }
+
+  let experienceAdvice: string | undefined;
+  let advisedOptions: string[] = [];
+  let routerGuard: Guardrail | undefined;
+  if ((adviceEnabled || routeEnabled) && stateSnapshot) {
+    try {
+      const report = await experienceReportFromDir(tracesDir);
+      if (adviceEnabled) {
+        const advice = adviseOptions(report, { state: stateSnapshot });
+        experienceAdvice = renderAdviceForPrompt(advice, stateSnapshot);
+        advisedOptions = advice.map((a) => a.optionId);
+      }
+      if (routeEnabled) {
+        routerGuard = createExperienceRouterGuard(
+          {
+            report,
+            state: stateSnapshot,
+            config: {
+              mode: routeMode,
+              rules: parseRoutingRules(process.env.SCISSOR_EXPERIENCE_ROUTE_RULES),
+              killSwitch: (process.env.SCISSOR_EXPERIENCE_ROUTE_KILL ?? "")
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean),
+              version: model,
+            },
+          },
+          {
+            onDecision: (d: RouteVerdict) =>
+              tracer?.record(routeMode === "enforce" ? "route-auto" : "route-shadow", {
+                from: d.from,
+                to: d.to,
+                fromRate: d.fromRate,
+                toRate: d.toRate,
+                fromSamples: d.fromSamples,
+                toSamples: d.toSamples,
+                state: d.stateBucket,
+              }),
+          },
+        );
+      }
+    } catch {
+      /* advisory/routing are best-effort; never block session creation on them */
+    }
+  }
+
   const systemPrompt = buildSystemPrompt({
     workspaceRoot,
     platform: process.platform,
@@ -206,6 +392,7 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     selfEdit,
     tdd,
     clarify: clarifyMode === "always",
+    experienceAdvice,
   });
 
   // Verification closed-loop applies only when the agent can edit files.
@@ -228,7 +415,7 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     memoryFile: MEMORY_FILENAME,
     tddMode: tdd,
     initialScratchpad: opts.resume?.scratchpad,
-    guardrails: [createOscillationGuard()],
+    guardrails: routerGuard ? [createOscillationGuard(), routerGuard] : [createOscillationGuard()],
     autoClarify: clarifyMode === "auto",
   });
 
@@ -248,7 +435,20 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     };
 
   if (tracer) {
-    tracer.record("session-start", { sessionId, provider: providerId, model, workspaceRoot });
+    const state = stateSnapshot ?? (await snapshotWorkspaceState(workspaceRoot, { approvalPolicy, tdd }));
+    tracer.record("session-start", {
+      schemaVersion: EXPERIENCE_SCHEMA_VERSION,
+      sessionId,
+      provider: providerId,
+      model,
+      workspaceRoot,
+      state,
+    });
+    // Record which options the advisor injected (if any), so a later phase can
+    // correlate advice with outcomes (doc §5 Phase 3: 记录建议是否改善结果).
+    if (advisedOptions.length > 0) {
+      tracer.record("advice", { options: advisedOptions });
+    }
     // Cap retention so default-on tracing can't grow without bound.
     const keep = Number.parseInt(process.env.SCISSOR_TRACE_KEEP ?? "", 10);
     pruneTraces(tracesDir, Number.isFinite(keep) && keep > 0 ? keep : DEFAULT_TRACE_KEEP);
@@ -373,27 +573,36 @@ export function makeCallbacks(renderer: TurnRenderer, tracer?: Tracer, opts: Cal
     },
     onToolEnd: (
       call: { id: string; name: string; arguments?: Record<string, unknown> },
-      result: { isError?: boolean },
+      result: { isError?: boolean; content?: string },
     ) => {
       renderer.onToolEnd(call, result as Parameters<TurnRenderer["onToolEnd"]>[1]);
-      const path =
-        (call.name === "write_file" || call.name === "edit_file") &&
-        typeof call.arguments?.path === "string"
-          ? call.arguments.path
-          : undefined;
-      tracer?.record("tool", {
-        name: call.name,
-        ok: !result.isError,
-        ms: tracer?.toolMs(call.id),
-        ...(path ? { path } : {}),
-      });
+      recordToolEvent(tracer, call, result);
     },
-    onRequestApproval: promptApproval,
-    onAskUser: (question: string, options?: string[], allowMultiple?: boolean) =>
-      opts.nonInteractive
-        ? autoAnswerAsk(question, options)
-        : promptAskUser(question, options, allowMultiple),
-    onPresentPlan: opts.nonInteractive ? autoApprovePlan : promptPlan,
+    onRequestApproval: async (call: ToolCall, preview: ToolPreview): Promise<ApprovalDecision> => {
+      const decision = await promptApproval(call, preview);
+      // Decision is low-cardinality ("approve" | "reject" | "always"); no content.
+      tracer?.record("approval", { name: call.name, decision });
+      return decision;
+    },
+    onAskUser: async (
+      question: string,
+      options?: string[],
+      allowMultiple?: boolean,
+    ): Promise<string> => {
+      const answer = opts.nonInteractive
+        ? await autoAnswerAsk(question, options)
+        : await promptAskUser(question, options, allowMultiple);
+      // Privacy: record only the shape of the interaction, never the question or
+      // the free-text answer (doc §6 — no user content in the experience store).
+      tracer?.record("ask_user", { options: options?.length ?? 0 });
+      return answer;
+    },
+    onPresentPlan: async (summary: string, steps: string[]): Promise<PlanDecision> => {
+      const handler = opts.nonInteractive ? autoApprovePlan : promptPlan;
+      const decision = await handler(summary, steps);
+      tracer?.record("plan", { steps: steps.length, decision: decision.action });
+      return decision;
+    },
     onUsage: (u: { promptTokens?: number; completionTokens?: number; totalTokens?: number }) =>
       tracer?.record("usage", { ...u }),
     onVerifyStart: renderer.onVerifyStart,

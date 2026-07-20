@@ -181,6 +181,37 @@ program
   });
 
 program
+  .command("experience [idOrPath]")
+  .description(
+    "offline option-utility report from session traces (default: all traces)",
+  )
+  .option("--json", "print the report as JSON")
+  .option("--min-samples <n>", "min samples before a stat is trusted (default 5)")
+  .option("--advise", "rank options by learned reliability for the current workspace")
+  .option("--curate", "suggest keep/promote/demote/archive/disable actions (nothing applied)")
+  .action(
+    async (
+      target: string | undefined,
+      opts: { json?: boolean; minSamples?: string; advise?: boolean; curate?: boolean },
+    ) => {
+      const { runExperienceCommand } = await import("./commands/experience.js");
+      process.exit(await runExperienceCommand(target, opts));
+    },
+  );
+
+program
+  .command("ab")
+  .description("A/B the eval suite: baseline (experience off) vs a candidate policy")
+  .option("-p, --provider <ids>", "comma-separated providers (default: configured default)")
+  .option("-t, --task <ids>", "comma-separated task ids to run (default: all)")
+  .option("--candidate <kind>", "candidate policy: advice | route (default: advice)")
+  .option("--strict", "exit non-zero if the candidate breaks any task")
+  .action(async (opts) => {
+    const { runAbCommand } = await import("./commands/ab.js");
+    process.exit(await runAbCommand(opts));
+  });
+
+program
   .command("eval-gen [idOrPath]")
   .description("generate a draft regression eval case from a session trace (default: latest)")
   .option("--out <path>", "write the draft to this file")

@@ -14,6 +14,7 @@ export * from "./guardrails.js";
 export * from "./mcp/config.js";
 export * from "./mcp/client.js";
 export * from "./tools/index.js";
+export * from "./experience/index.js";
 export {
   createProvider,
   createRoutedProvider,

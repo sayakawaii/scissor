@@ -458,6 +458,96 @@ scissor eval-gen <id> --print       # print the draft to stdout instead
 (The `json-csv-roundtrip` bench task was seeded exactly this way, then tightened
 to check RFC-4180 quoting and a lossless round trip.)
 
+## Experience layer (learning from traces)
+
+An OaK-inspired layer that turns first-person execution traces into structured
+experience the agent can *learn from* — reliability of each tool per situation,
+what actually contributes to finishing a task, and which capabilities to keep or
+retire. It is **strictly staged for safety**: every stage is off by default and
+each one only *observes* until you promote it with evidence. Nothing here changes
+a permission or hard constraint. (Design: `docs/agent-design/oak-inspired-agent-design.md`.)
+
+Normalized traces map into `(state, option, outcome)` events. `state` is a
+low-cardinality, secret-free snapshot of the workspace (language, package manager,
+VCS, size bucket, approval policy, TDD); `option` is a tool/skill plus its model
+version; `outcome` is a termination class (`success | failure | cancelled |
+budget | guardrail`), plus timing, cost, a normalized error signature, and the
+**final task outcome** so an option is judged by whether it helped finish the job
+— never by call count.
+
+### Offline option-utility report (observe-only)
+
+`scissor experience` aggregates every trace in `~/.scissor/traces` into per
+`(state, option)` statistics: success rate with a Wilson confidence interval and
+a sample-size gate, EWMA duration/cost, top error signatures, and
+state-conditioned findings (options that are markedly more reliable in a given
+state). It changes nothing about how the agent runs.
+
+```bash
+scissor experience                 # aggregate all traces
+scissor experience <id>            # scope to one session
+scissor experience --min-samples 8 # raise the confidence gate
+scissor experience --json          # machine-readable
+```
+
+### Advisory mode (Phase 3, off by default)
+
+`SCISSOR_EXPERIENCE_ADVICE=1` injects a compact, **advisory** block into the
+system prompt for the current workspace state — ranked, confident options with
+reasons and cautions, explicitly framed as *guidance, not rules*. The existing
+policy still makes every decision; it safe-degrades to nothing when there's no
+confident data. Preview what it would inject:
+
+```bash
+scissor experience --advise
+```
+
+### Restricted auto-routing (Phase 4, off by default)
+
+A guardrail that can *steer* an unreliable tool call toward a more reliable
+alternative — under strict controls: explicit `from>to` rules, a confidence gate,
+a required reliability gap, a kill switch, and graceful fallback. It has three
+modes via `SCISSOR_EXPERIENCE_ROUTE`:
+
+- `shadow` — records what it *would* route (into the trace) without changing
+  behavior, so you can measure it first;
+- `enforce` — actually deflects the call with a non-error steering message the
+  agent can act on or override;
+- unset/`off` — disabled.
+
+```bash
+SCISSOR_EXPERIENCE_ROUTE=shadow \
+SCISSOR_EXPERIENCE_ROUTE_RULES="grep>retrieve" \
+SCISSOR_EXPERIENCE_ROUTE_KILL="write_file" \
+  scissor "find where retries are configured"
+```
+
+### Capability curation (Phase 5, suggestions only)
+
+`scissor experience --curate` reviews the report and suggests, per confident
+cell, one of `disable` / `investigate` / `archive` / `demote` / `promote` /
+`keep` — with a reason grounded in reliability and final-task contribution.
+**Nothing is applied automatically**; it's a maintenance view for you to act on,
+and permissions/hard constraints are never touched.
+
+```bash
+scissor experience --curate         # ranked, most-actionable first
+scissor experience --curate --json
+```
+
+### A/B eval harness (measure before promoting)
+
+Before promoting advice or routing from shadow to enforce, prove it helps.
+`scissor ab` runs the eval suite twice — a baseline with the experience layer off
+and a candidate with the chosen policy on — and reports fixed/broken tasks plus
+pass and turns deltas. Under `--strict` any newly broken task fails the command.
+
+```bash
+scissor ab                                  # baseline vs advice-on (default)
+scissor ab --candidate route --strict       # baseline vs route-enforce, fail on regressions
+scissor ab -t create-file,fix-bug           # scope to specific tasks
+```
+
 ## Self-iteration (experimental)
 
 scissor can modify and reload its **own** source code under a supervisor that
@@ -592,7 +682,7 @@ By default scissor uses a **plan-gate** flow: for non-trivial work it presents a
 npm install
 npm run typecheck     # non-emitting type check
 npm run build         # tsup build (also used by the self-update verification gate)
-npm test              # deterministic tests (session, supervisor, retrieval, verify, edits, compaction, memory, eval, bench, mcp, tdd)
+npm test              # deterministic tests (session, supervisor, retrieval, verify, edits, compaction, memory, eval, bench, mcp, tdd, experience/advisor/router/curator, a/b)
 npm run smoke         # real-LLM tool-loop smoke (needs a provider key)
 npm run smoke:plan    # real-LLM plan-gate smoke
 npm run smoke:restart # real-LLM restart_self smoke

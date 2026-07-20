@@ -12,6 +12,12 @@ export interface PromptContext {
   tdd?: boolean;
   /** When true, lead clearly ambiguous requests with a clarifying question. */
   clarify?: boolean;
+  /**
+   * Optional experience-based option guidance (doc §5 Phase 3 建议模式): offline
+   * success statistics rendered as advisory hints, NOT rules. Injected only when
+   * the experience advisor is explicitly enabled; the agent remains the decider.
+   */
+  experienceAdvice?: string;
 }
 
 /**
@@ -71,6 +77,10 @@ export function buildSystemPrompt(ctx: PromptContext): string {
       ]
     : [];
 
+  const experienceBlock = ctx.experienceAdvice?.trim()
+    ? [``, ctx.experienceAdvice.trim()]
+    : [];
+
   return [
     `You are scissor, a personal AI coding agent that runs in the terminal. You help the user accomplish software engineering and general tasks by reasoning and using tools.`,
     ``,
@@ -105,5 +115,6 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     ...selfEditGuidance,
     ...repoMapBlock,
     ...memoryBlock,
+    ...experienceBlock,
   ].join("\n");
 }

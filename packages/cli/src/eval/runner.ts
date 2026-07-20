@@ -2,7 +2,8 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Agent, ProviderId } from "@scissor/core";
-import { createSession } from "../session.js";
+import { createSession, recordToolEvent } from "../session.js";
+import type { Tracer } from "../trace.js";
 import { EVAL_TASKS, findTasks, type EvalTask } from "./tasks.js";
 
 export interface TaskResult {
@@ -33,10 +34,35 @@ const QUIET_CALLBACKS = {
   onAskUser: async () => "proceed",
 };
 
+/**
+ * Auto-approving callbacks that also feed the experience layer: they record
+ * tool/turn/usage/verify events to the session tracer so eval and bench runs —
+ * the most frequent, deterministic signal source — become experience data
+ * (doc §4 "eval / bench：评估经验路由是否真正提高 pass rate"). Behavior is
+ * identical to QUIET_CALLBACKS; only observability is added.
+ */
+function tracingQuietCallbacks(tracer: Tracer) {
+  return {
+    ...QUIET_CALLBACKS,
+    onTurnStart: (turn: number) => tracer.record("turn", { turn }),
+    onToolStart: (call: { id: string }) => tracer.toolStart(call.id),
+    onToolEnd: (
+      call: { id: string; name: string; arguments?: Record<string, unknown> },
+      result: { isError?: boolean; content?: string },
+    ) => recordToolEvent(tracer, call, result),
+    onUsage: (u: { promptTokens?: number; completionTokens?: number; totalTokens?: number }) =>
+      tracer.record("usage", { ...u }),
+    onVerifyResult: (r: { ok: boolean; summary: string; skipped?: boolean }) =>
+      tracer.record("verify", { ok: r.ok, summary: r.summary, skipped: r.skipped }),
+  };
+}
+
 export interface EvalSession {
   agent: Agent;
   providerId: ProviderId;
   model: string;
+  /** Present when tracing is enabled; wired so eval runs record experience data. */
+  tracer?: Tracer;
 }
 
 /** Builds an agent session for a task; injectable so the harness is testable. */
@@ -48,7 +74,7 @@ export type EvalSessionFactory = (opts: {
 
 const defaultSessionFactory: EvalSessionFactory = async ({ workspaceRoot, provider, router }) => {
   const s = await createSession({ workspaceRoot, provider, router, approvalPolicy: "auto" });
-  return { agent: s.agent, providerId: s.providerId, model: s.model };
+  return { agent: s.agent, providerId: s.providerId, model: s.model, tracer: s.tracer };
 };
 
 /** How the agent under test runs a single task inside a prepared workspace. */
@@ -73,8 +99,9 @@ export function scissorTarget(
       const session = await factory({ workspaceRoot, provider, router: targetOpts.router });
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const callbacks = session.tracer ? tracingQuietCallbacks(session.tracer) : QUIET_CALLBACKS;
       try {
-        const res = await session.agent.run(task.prompt, QUIET_CALLBACKS, controller.signal);
+        const res = await session.agent.run(task.prompt, callbacks, controller.signal);
         return {
           finalText: res.finalText,
           turns: res.turns,
@@ -84,6 +111,7 @@ export function scissorTarget(
         };
       } finally {
         clearTimeout(timer);
+        session.tracer?.close();
       }
     },
   };
