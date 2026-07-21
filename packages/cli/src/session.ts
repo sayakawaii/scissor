@@ -56,6 +56,7 @@ import {
 } from "./ui/render.js";
 import {
   autoAnswerAsk,
+  autoApprove,
   autoApprovePlan,
   promptApproval,
   promptAskUser,
@@ -579,7 +580,9 @@ export function makeCallbacks(renderer: TurnRenderer, tracer?: Tracer, opts: Cal
       recordToolEvent(tracer, call, result);
     },
     onRequestApproval: async (call: ToolCall, preview: ToolPreview): Promise<ApprovalDecision> => {
-      const decision = await promptApproval(call, preview);
+      const decision = opts.nonInteractive
+        ? await autoApprove(call, preview)
+        : await promptApproval(call, preview);
       // Decision is low-cardinality ("approve" | "reject" | "always"); no content.
       tracer?.record("approval", { name: call.name, decision });
       return decision;

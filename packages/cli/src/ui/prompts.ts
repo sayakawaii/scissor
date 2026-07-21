@@ -34,6 +34,31 @@ export async function promptApproval(
   return choice;
 }
 
+/**
+ * Non-interactive approval handler (used under --auto or when there is no TTY):
+ * show the request for visibility, then decide without blocking so headless /
+ * piped runs never hang on a prompt that can't be answered. Ordinary mutating
+ * calls are approved so work proceeds; genuinely destructive actions are
+ * rejected rather than silently run — the rejection is fed back to the agent as
+ * a non-error so it can choose another approach.
+ */
+export async function autoApprove(
+  _call: ToolCall,
+  preview: ToolPreview,
+): Promise<ApprovalDecision> {
+  process.stdout.write("\n");
+  process.stdout.write(theme.warn("Approval required: ") + preview.summary + "\n");
+  if (preview.dangerous) {
+    process.stdout.write(
+      theme.err("This action looks destructive.") +
+        theme.dim(" (no interactive user — skipping; agent should try another way)\n"),
+    );
+    return "reject";
+  }
+  process.stdout.write(theme.dim("  (auto-approved)\n"));
+  return "approve";
+}
+
 const OTHER = "__other__";
 
 /** Handle the ask_user control tool (interactive: keyboard select / checkbox). */

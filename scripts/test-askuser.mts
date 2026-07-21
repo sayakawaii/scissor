@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { Agent, type ChatParams, type ChatResult, type LLMProvider } from "@scissor/core";
-import { autoAnswerAsk } from "../packages/cli/src/ui/prompts.js";
+import { autoAnswerAsk, autoApprove } from "../packages/cli/src/ui/prompts.js";
 
 class ScriptProvider implements LLMProvider {
   id = "deepseek" as const;
@@ -92,6 +92,22 @@ function makeAgent(provider: ScriptProvider): Agent {
 
   const freeform = await autoAnswerAsk("Anything?");
   assert.match(freeform, /best judgment/i);
+}
+
+// 4. autoApprove (the --auto / no-TTY approval handler) never blocks: ordinary
+// mutations are approved so headless work proceeds, but genuinely destructive
+// actions are rejected (never silently run without a human), handed back to the
+// agent as a non-error. Regression guard for the headless approval-hang bug.
+{
+  const call = { id: "t", name: "edit_file", arguments: {} };
+  const safe = await autoApprove(call, { summary: "edit file", dangerous: false });
+  assert.equal(safe, "approve", "safe mutation auto-approved headlessly");
+
+  const danger = await autoApprove(
+    { id: "t", name: "run_shell", arguments: {} },
+    { summary: "rm -rf /", dangerous: true },
+  );
+  assert.equal(danger, "reject", "destructive action rejected, not silently run");
 }
 
 process.stdout.write("test-askuser: ALL PASS\n");
