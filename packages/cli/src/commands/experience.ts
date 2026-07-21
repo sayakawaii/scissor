@@ -2,6 +2,7 @@ import path from "node:path";
 import {
   adviseOptions,
   curateOptions,
+  filterFailingStats,
   formatAdvice,
   formatCuration,
   formatExperienceReport,
@@ -16,6 +17,7 @@ export interface ExperienceCommandOptions {
   minSamples?: string;
   advise?: boolean;
   curate?: boolean;
+  fail?: string;
 }
 
 function tracesDir(): string {
@@ -52,6 +54,17 @@ export async function runExperienceCommand(
       theme.err(`Could not read traces from ${dir}. Run a session with --trace first.\n`),
     );
     return 1;
+  }
+
+  // --fail <rate> filter: only keep cells below the threshold, flakiest first.
+  // Applied before advise/curate so the filtered report is used.
+  if (opts.fail !== undefined) {
+    const rate = Number.parseFloat(opts.fail);
+    if (!Number.isFinite(rate) || rate < 0 || rate > 1) {
+      process.stderr.write(theme.err(`--fail expects a fraction between 0 and 1, got "${opts.fail}"\n`));
+      return 1;
+    }
+    report = filterFailingStats(report, rate);
   }
 
   // Advisory view: rank options by learned reliability for the CURRENT workspace

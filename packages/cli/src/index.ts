@@ -189,10 +189,11 @@ program
   .option("--min-samples <n>", "min samples before a stat is trusted (default 5)")
   .option("--advise", "rank options by learned reliability for the current workspace")
   .option("--curate", "suggest keep/promote/demote/archive/disable actions (nothing applied)")
+  .option("--fail <rate>", "only show cells with successRate below this fraction (0-1), flakiest first")
   .action(
     async (
       target: string | undefined,
-      opts: { json?: boolean; minSamples?: string; advise?: boolean; curate?: boolean },
+      opts: { json?: boolean; minSamples?: string; advise?: boolean; curate?: boolean; fail?: string },
     ) => {
       const { runExperienceCommand } = await import("./commands/experience.js");
       process.exit(await runExperienceCommand(target, opts));

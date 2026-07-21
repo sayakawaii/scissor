@@ -40,6 +40,29 @@ function statLine(s: OptionStat, c: Required<ReportColors>): string {
   return `${head}  ${body}\n      ${state}${errs}`;
 }
 
+/**
+ * Filter an experience report to keep only option/state cells whose successRate
+ * is strictly below `rate` (a fraction between 0 and 1), sorted by successRate
+ * ascending (flakiest first). Returns a new ExperienceReport with the filtered
+ * stats array; all other fields (events, tasks, minSamples) are preserved.
+ * stateConditioned findings that reference filtered-out cells are also dropped.
+ */
+export function filterFailingStats(report: ExperienceReport, rate: number): ExperienceReport {
+  const filtered = report.stats
+    .filter((s) => s.successRate < rate)
+    .sort((a, b) => a.successRate - b.successRate || a.optionId.localeCompare(b.optionId));
+
+  // Only keep stateConditioned findings whose both buckets still exist in filtered.
+  const keepBuckets = new Set(filtered.map((s) => `${s.optionId}\u0000${s.version}\u0000${s.stateBucket}`));
+  const sc = report.stateConditioned.filter(
+    (f) =>
+      keepBuckets.has(`${f.optionId}\u0000${f.version}\u0000${f.betterBucket}`) &&
+      keepBuckets.has(`${f.optionId}\u0000${f.version}\u0000${f.worseBucket}`),
+  );
+
+  return { ...report, stats: filtered, stateConditioned: sc };
+}
+
 /** Render an experience report as text. `c` is an optional color palette. */
 export function formatExperienceReport(report: ExperienceReport, c: ReportColors = {}): string {
   const cols: Required<ReportColors> = {
