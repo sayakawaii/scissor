@@ -21,6 +21,16 @@ export interface TaskChange {
   turnsAfter: number;
 }
 
+/** Token/cost totals for one arm, summed over the matched (compared) tasks. */
+export interface ArmCost {
+  tokens: number;
+  costUsd: number;
+  /** True only when every matched task reported an estimated cost. */
+  costKnown: boolean;
+  /** True when at least one matched task reported token usage. */
+  tokensKnown: boolean;
+}
+
 export interface AbComparison {
   baselinePassed: number;
   baselineTotal: number;
@@ -33,6 +43,9 @@ export interface AbComparison {
   changes: TaskChange[];
   turnsBefore: number;
   turnsAfter: number;
+  /** Token/cost totals over matched tasks (Databricks-style cost-per-task view). */
+  baselineCost: ArmCost;
+  candidateCost: ArmCost;
   /** Tasks compared (present in both arms). */
   compared: number;
   /** Task keys present in only one arm (skipped from the comparison). */
@@ -41,6 +54,18 @@ export interface AbComparison {
 
 function key(provider: string, taskId: string): string {
   return `${provider}::${taskId}`;
+}
+
+function usd(n: number): string {
+  return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+}
+
+/** Describe how the candidate (after) compares to the baseline (before). */
+function ratio(before: number, after: number): string {
+  if (before <= 0 || after <= 0) return "";
+  if (after < before) return `(${(before / after).toFixed(2)}x less)`;
+  if (after > before) return `(${(after / before).toFixed(2)}x more)`;
+  return "(same)";
 }
 
 function indexRuns(runs: ProviderRun[]): Map<string, { r: TaskResult; provider: string }> {
@@ -71,6 +96,8 @@ export function compareRuns(baseline: ProviderRun[], candidate: ProviderRun[]): 
   let candidatePassed = 0;
   let turnsBefore = 0;
   let turnsAfter = 0;
+  const baselineCost = emptyCost();
+  const candidateCost = emptyCost();
 
   const allKeys = new Set<string>([...base.keys(), ...cand.keys()]);
   const sorted = [...allKeys].sort();
@@ -87,6 +114,8 @@ export function compareRuns(baseline: ProviderRun[], candidate: ProviderRun[]): 
     if (after) candidatePassed++;
     turnsBefore += b.r.turns;
     turnsAfter += c.r.turns;
+    accrueCost(baselineCost, b.r);
+    accrueCost(candidateCost, c.r);
     changes.push({
       provider: b.provider,
       taskId: b.r.taskId,
@@ -110,9 +139,25 @@ export function compareRuns(baseline: ProviderRun[], candidate: ProviderRun[]): 
     changes,
     turnsBefore,
     turnsAfter,
+    baselineCost,
+    candidateCost,
     compared,
     unmatched,
   };
+}
+
+function emptyCost(): ArmCost {
+  return { tokens: 0, costUsd: 0, costKnown: true, tokensKnown: false };
+}
+
+function accrueCost(acc: ArmCost, r: TaskResult): void {
+  const tok = (r.promptTokens ?? 0) + (r.completionTokens ?? 0);
+  if (r.promptTokens !== undefined || r.completionTokens !== undefined) {
+    acc.tokens += tok;
+    acc.tokensKnown = true;
+  }
+  if (r.costUsd !== undefined) acc.costUsd += r.costUsd;
+  else acc.costKnown = false;
 }
 
 export interface CompareColors {
@@ -150,6 +195,22 @@ export function formatComparison(
         ? err(`${cmp.passDelta} passing`)
         : dim("no net change");
   lines.push(`  pass delta: ${deltaStr}   ${dim(`turns ${cmp.turnsBefore}\u2192${cmp.turnsAfter}`)}`);
+
+  // Databricks-style cost/quality view: tokens and est. cost per task. Only
+  // meaningful when both arms reported usage over the same matched tasks.
+  const n = cmp.compared || 1;
+  if (cmp.baselineCost.tokensKnown && cmp.candidateCost.tokensKnown) {
+    const tb = Math.round(cmp.baselineCost.tokens / n);
+    const tc = Math.round(cmp.candidateCost.tokens / n);
+    lines.push(`  tokens/task: ${a} ${tb}  \u2192  ${b} ${tc}   ${dim(ratio(tb, tc))}`);
+  }
+  if (cmp.baselineCost.costKnown && cmp.candidateCost.costKnown && cmp.compared > 0) {
+    const cb = cmp.baselineCost.costUsd / n;
+    const cc = cmp.candidateCost.costUsd / n;
+    lines.push(`  est. cost/task: ${a} ${usd(cb)}  \u2192  ${b} ${usd(cc)}   ${dim(ratio(cb, cc))}`);
+  } else if (cmp.baselineCost.tokensKnown && cmp.candidateCost.tokensKnown) {
+    lines.push(dim("  est. cost/task: n/a (model has no price entry)"));
+  }
 
   for (const t of cmp.fixed) {
     lines.push(`  ${ok("fixed")}  ${t.provider}/${t.taskId} ${dim(`(${t.turnsBefore}t\u2192${t.turnsAfter}t)`)}`);

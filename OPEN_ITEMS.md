@@ -254,6 +254,41 @@ goose is a mature, general-purpose agent; the biggest deltas to close:
 - [ ] Run the head-to-head once goose is installed (adapter is ready:
   `scissor bench --agent goose`).
 
+## 7d. Harness value / cost-quality benchmarking (Databricks-style)
+
+Prove scissor's scaffolding earns its keep vs a bare model call. Databricks'
+2026 internal benchmark (Zaharia et al.) showed the *harness* changes cost-per-
+task by >2x at equal quality, and that per-token price is a poor proxy for per-
+task cost — so we measure **success rate AND cost/tokens per task**, holding the
+model fixed. Methodology: fixed model + fixed task set, run multiple arms, report
+pass rate + tokens/task + est. cost/task; repeat N times for stochasticity.
+
+- [x] **(A) Bare baseline target**: an in-process minimal harness AgentTarget —
+  read/write/edit/shell only, ~1-line system prompt, no repo-map, retrieval,
+  verify, guardrails, router, memory, or scratchpad (a Pi-style baseline). Runs
+  in the same `runSuite` with identical checks. (`packages/cli/src/eval/bare.ts`)
+- [x] **(B) Per-task cost instrumentation**: `TaskResult` carries prompt/
+  completion tokens + est. `costUsd` (via the `MODEL_PRICES` table); `compareRuns`
+  aggregates tokens/task and cost/task, and `formatComparison` prints the
+  Databricks-style cost-quality delta. Surfaced via `scissor ab --candidate bare`
+  (baseline=bare, candidate=scissor, router+experience off → model fixed).
+  (`packages/cli/src/eval/{runner,compare}.ts`, `commands/ab.ts`)
+- [ ] **(C) Ablation matrix over scissor's own scaffolding**: run the suite with
+  each component toggled (repo-map, retrieval, router, verify, experience-advice)
+  and produce a table of pass-rate & cost/token deltas — "which scaffolding earns
+  its token cost", the Databricks lesson applied inward. Mostly orchestration over
+  existing flags + the A/B cost machinery. **Next up after A+B.**
+- [ ] **(D) Real-codebase task set (Databricks-faithful)**: curate a harder
+  benchmark of real, reviewed tasks on a real repo (scissor itself and/or a chosen
+  OSS repo) via `eval-gen` from actual sessions, instead of the small synthetic
+  eval/bench tasks — addresses "SWE-bench doesn't reflect your codebase". Highest
+  fidelity/signal; largest effort (task curation + trustworthy checks).
+- [ ] Run each arm N times and report mean ± spread (LLM runs are stochastic);
+  a single run can mislead, especially on the small task set.
+- [ ] Add an external-harness arm (e.g. Pi/aider) via the existing
+  `--agent custom --agent-cmd` adapter for a third reference point (their token
+  cost isn't in-process, so cost there is out of scope unless the CLI reports it).
+
 ## 7c. Test-first (TDD) mode
 
 - [x] Opt-in hard gate (`--tdd` / config `tddMode`): the agent must create/edit a

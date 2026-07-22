@@ -18,7 +18,7 @@ const EXP_ENV = [
   "SCISSOR_EXPERIENCE_ROUTE",
 ] as const;
 
-type CandidateKind = "advice" | "route";
+type CandidateKind = "advice" | "route" | "bare";
 
 function parseList(v?: string): string[] | undefined {
   if (!v) return undefined;
@@ -49,23 +49,42 @@ function restoreEnv(snap: Record<string, string | undefined>): void {
   }
 }
 
-function applyArm(candidate: CandidateKind | null): void {
+function applyArm(candidate: "advice" | "route" | null): void {
   for (const k of EXP_ENV) delete process.env[k];
   if (candidate === "advice") process.env.SCISSOR_EXPERIENCE_ADVICE = "1";
   else if (candidate === "route") process.env.SCISSOR_EXPERIENCE_ROUTE = "enforce";
 }
 
+/** Relabel each run's provider to a canonical id so the two arms match by task. */
+function relabel(runs: ProviderRun[], providers: ProviderId[]): ProviderRun[] {
+  return runs.map((r, i) => ({ ...r, provider: String(providers[i] ?? r.provider) }));
+}
+
+const onProgress =
+  (arm: string) =>
+  (e: ProgressEvent): void => {
+    if (e.type === "task-end") {
+      const mark = e.result.pass ? theme.ok("\u2713") : theme.err("\u2717");
+      process.stdout.write(`  [${arm}] ${mark} ${e.result.taskId}\n`);
+    }
+  };
+
 /**
- * `scissor ab` — run the eval suite twice (baseline with the experience layer
- * off, candidate with the chosen policy on) and report whether the candidate
- * changes pass rate. This is the evidence gate before promoting advice/routing
- * from shadow to enforce (doc §4/§5). Under --strict, any newly broken task
- * fails the command.
+ * `scissor ab` — run the eval suite as two arms and report the difference in
+ * pass rate AND per-task token/cost (Databricks-style; see OPEN_ITEMS §7d):
+ *
+ *  - `advice` / `route`: baseline = experience off, candidate = the policy on —
+ *    the evidence gate before promoting advice/routing to enforce (doc §4/§5).
+ *  - `bare`: baseline = the minimal `bare` harness, candidate = full scissor
+ *    (router + experience off so the model is held fixed) — measures how much
+ *    scissor's scaffolding adds over a near-naked model call.
+ *
+ * Under --strict, any newly broken task fails the command.
  */
 export async function runAbCommand(opts: AbCommandOptions): Promise<number> {
   const candidate = (opts.candidate ?? "advice") as CandidateKind;
-  if (candidate !== "advice" && candidate !== "route") {
-    process.stderr.write(theme.err(`Unknown candidate "${candidate}". Use: advice | route\n`));
+  if (candidate !== "advice" && candidate !== "route" && candidate !== "bare") {
+    process.stderr.write(theme.err(`Unknown candidate "${candidate}". Use: advice | route | bare\n`));
     return 2;
   }
 
@@ -78,42 +97,48 @@ export async function runAbCommand(opts: AbCommandOptions): Promise<number> {
   }
   const taskIds = parseList(opts.task);
 
-  const candidateLabel = candidate === "advice" ? "advice-on" : "route-enforce";
+  const candidateLabel =
+    candidate === "advice" ? "advice-on" : candidate === "route" ? "route-enforce" : "scissor";
+  const baselineLabel = candidate === "bare" ? "bare" : "baseline";
   process.stdout.write(
     theme.brand("scissor ab") +
       theme.dim(
-        ` · ${providers.join(", ")} · tasks: ${taskIds?.join(", ") ?? "all"} · candidate: ${candidateLabel}\n`,
+        ` · ${providers.join(", ")} · tasks: ${taskIds?.join(", ") ?? "all"} · ${baselineLabel} vs ${candidateLabel}\n`,
       ),
   );
-
-  const onProgress =
-    (arm: string) =>
-    (e: ProgressEvent): void => {
-      if (e.type === "task-end") {
-        const mark = e.result.pass ? theme.ok("\u2713") : theme.err("\u2717");
-        process.stdout.write(`  [${arm}] ${mark} ${e.result.taskId}\n`);
-      }
-    };
 
   const saved = snapshotEnv();
   let baseline: ProviderRun[];
   let candidateRuns: ProviderRun[];
   try {
-    process.stdout.write(theme.dim("\nbaseline (experience off)…\n"));
-    applyArm(null);
-    baseline = await runEval({ providers, taskIds, onProgress: onProgress("base") });
-
-    process.stdout.write(theme.dim(`\ncandidate (${candidateLabel})…\n`));
-    applyArm(candidate);
-    candidateRuns = await runEval({ providers, taskIds, onProgress: onProgress("cand") });
+    if (candidate === "bare") {
+      // Hold the model fixed: experience + router off in both arms.
+      applyArm(null);
+      process.stdout.write(theme.dim("\nbaseline (bare minimal harness)…\n"));
+      baseline = await runEval({ providers, taskIds, bare: true, onProgress: onProgress("bare") });
+      process.stdout.write(theme.dim("\ncandidate (full scissor)…\n"));
+      candidateRuns = await runEval({
+        providers,
+        taskIds,
+        router: false,
+        onProgress: onProgress("scissor"),
+      });
+    } else {
+      process.stdout.write(theme.dim("\nbaseline (experience off)…\n"));
+      applyArm(null);
+      baseline = await runEval({ providers, taskIds, onProgress: onProgress("base") });
+      process.stdout.write(theme.dim(`\ncandidate (${candidateLabel})…\n`));
+      applyArm(candidate);
+      candidateRuns = await runEval({ providers, taskIds, onProgress: onProgress("cand") });
+    }
   } finally {
     restoreEnv(saved);
   }
 
-  const cmp = compareRuns(baseline, candidateRuns);
+  const cmp = compareRuns(relabel(baseline, providers), relabel(candidateRuns, providers));
   process.stdout.write(
     "\n" +
-      formatComparison(cmp, { baseline: "baseline", candidate: candidateLabel }, {
+      formatComparison(cmp, { baseline: baselineLabel, candidate: candidateLabel }, {
         bold: theme.bold,
         dim: theme.dim,
         ok: theme.ok,

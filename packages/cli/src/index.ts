@@ -205,7 +205,7 @@ program
   .description("A/B the eval suite: baseline (experience off) vs a candidate policy")
   .option("-p, --provider <ids>", "comma-separated providers (default: configured default)")
   .option("-t, --task <ids>", "comma-separated task ids to run (default: all)")
-  .option("--candidate <kind>", "candidate policy: advice | route (default: advice)")
+  .option("--candidate <kind>", "candidate: advice | route | bare (default: advice; bare = scissor vs minimal harness)")
   .option("--strict", "exit non-zero if the candidate breaks any task")
   .action(async (opts) => {
     const { runAbCommand } = await import("./commands/ab.js");

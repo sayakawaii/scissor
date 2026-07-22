@@ -14,8 +14,23 @@ import assert from "node:assert/strict";
 import { compareRuns, formatComparison } from "../packages/cli/src/eval/compare.js";
 import type { ProviderRun, TaskResult } from "../packages/cli/src/eval/runner.js";
 
-function res(taskId: string, pass: boolean, turns: number): TaskResult {
-  return { taskId, title: taskId, tags: [], pass, detail: "", turns, elapsedMs: 1000, timedOut: false };
+function res(
+  taskId: string,
+  pass: boolean,
+  turns: number,
+  cost?: { promptTokens: number; completionTokens: number; costUsd: number },
+): TaskResult {
+  return {
+    taskId,
+    title: taskId,
+    tags: [],
+    pass,
+    detail: "",
+    turns,
+    elapsedMs: 1000,
+    timedOut: false,
+    ...(cost ?? {}),
+  };
 }
 function run(provider: string, results: TaskResult[]): ProviderRun {
   return { provider, model: "m1", results, passed: results.filter((r) => r.pass).length, total: results.length };
@@ -76,6 +91,47 @@ assert.ok(out.includes("fixed"), "fixed task listed");
   const good = compareRuns(b3, c3);
   assert.equal(good.passDelta, 1, "one task fixed");
   assert.equal(good.broke.length, 0, "no regressions -> strict passes");
+}
+
+// 8. Cost/quality aggregation (Databricks-style): tokens + cost per arm are
+// summed over matched tasks, and formatComparison surfaces tokens/task and
+// est. cost/task with a ratio.
+{
+  const bare = [
+    run("gpt", [
+      res("a", false, 5, { promptTokens: 4000, completionTokens: 400, costUsd: 0.02 }),
+      res("b", true, 5, { promptTokens: 6000, completionTokens: 600, costUsd: 0.03 }),
+    ]),
+  ];
+  const scissor = [
+    run("gpt", [
+      res("a", true, 8, { promptTokens: 9000, completionTokens: 900, costUsd: 0.05 }),
+      res("b", true, 7, { promptTokens: 11000, completionTokens: 1100, costUsd: 0.07 }),
+    ]),
+  ];
+  const c = compareRuns(bare, scissor);
+  assert.equal(c.passDelta, 1, "scissor fixes one task over bare");
+  assert.equal(c.baselineCost.tokens, 11000, "bare tokens summed (4400+6600)");
+  assert.equal(c.candidateCost.tokens, 22000, "scissor tokens summed (9900+12100)");
+  assert.ok(Math.abs(c.baselineCost.costUsd - 0.05) < 1e-9, "bare cost summed");
+  assert.ok(Math.abs(c.candidateCost.costUsd - 0.12) < 1e-9, "scissor cost summed");
+  assert.equal(c.baselineCost.costKnown && c.candidateCost.costKnown, true, "all matched tasks priced");
+
+  const out = formatComparison(c, { baseline: "bare", candidate: "scissor" });
+  assert.match(out, /tokens\/task: bare 5500\s+→\s+scissor 11000/, "per-task tokens rendered");
+  assert.match(out, /est\. cost\/task/, "per-task cost rendered");
+  assert.match(out, /2\.00x more/, "cost ratio (scissor 2x more per task) shown");
+}
+
+// 9. Missing cost data degrades gracefully (no crash, cost marked unknown).
+{
+  const b = [run("gpt", [res("a", true, 3)])];
+  const c = [run("gpt", [res("a", true, 3)])];
+  const cmp = compareRuns(b, c);
+  assert.equal(cmp.baselineCost.tokensKnown, false, "no tokens reported");
+  assert.equal(cmp.baselineCost.costKnown, false, "cost unknown when a task lacks costUsd");
+  const out = formatComparison(cmp, {});
+  assert.doesNotMatch(out, /tokens\/task/, "no token line when usage is absent");
 }
 
 process.stdout.write("test-ab: ALL PASS\n");
