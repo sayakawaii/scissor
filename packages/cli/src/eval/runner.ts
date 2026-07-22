@@ -297,11 +297,13 @@ export interface RunEvalOptions {
   router?: boolean;
   /** Use the bare minimal-harness baseline instead of scissor. */
   bare?: boolean;
+  /** Explicit task list; overrides taskIds resolution (used to reach bench tasks). */
+  tasks?: EvalTask[];
 }
 
 /** Run the default eval suite with scissor (or the bare baseline) per provider. */
 export async function runEval(opts: RunEvalOptions = {}): Promise<ProviderRun[]> {
-  const tasks = findTasks(opts.taskIds);
+  const tasks = opts.tasks ?? findTasks(opts.taskIds);
   const factory = opts.sessionFactory ?? defaultSessionFactory;
   const providers = opts.providers ?? [undefined as unknown as ProviderId];
   const targets = providers.map((p) =>

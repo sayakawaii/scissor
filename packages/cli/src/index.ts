@@ -206,6 +206,7 @@ program
   .option("-p, --provider <ids>", "comma-separated providers (default: configured default)")
   .option("-t, --task <ids>", "comma-separated task ids to run (default: all)")
   .option("--candidate <kind>", "candidate: advice | route | bare (default: advice; bare = scissor vs minimal harness)")
+  .option("--runs <n>", "repeat each arm N times and report mean ± spread (default: 1)")
   .option("--strict", "exit non-zero if the candidate breaks any task")
   .action(async (opts) => {
     const { runAbCommand } = await import("./commands/ab.js");

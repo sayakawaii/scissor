@@ -1,6 +1,7 @@
 import { applyEnvOverrides, loadConfig, PROVIDER_IDS, type ProviderId } from "@scissor/core";
 import { theme } from "../ui/render.js";
 import { runEval, type ProgressEvent, type ProviderRun } from "../eval/runner.js";
+import { resolveTasks } from "../eval/bench-tasks.js";
 import { buildAblation, formatAblation, type AblationArm } from "../eval/compare.js";
 
 export interface AblateCommandOptions {
@@ -126,6 +127,11 @@ export async function runAblateCommand(opts: AblateCommandOptions): Promise<numb
     return 2;
   }
   const taskIds = parseList(opts.task);
+  const tasks = resolveTasks(taskIds);
+  if (taskIds && tasks.length === 0) {
+    process.stderr.write(theme.err(`No tasks matched: ${taskIds.join(", ")}\n`));
+    return 2;
+  }
 
   process.stdout.write(
     theme.brand("scissor ablate") +
@@ -140,14 +146,14 @@ export async function runAblateCommand(opts: AblateCommandOptions): Promise<numb
   try {
     process.stdout.write(theme.dim("\nreference (full scissor)…\n"));
     applyArm({}); // everything on; router forced off below for a fixed model
-    reference = await runEval({ providers, taskIds, router: false, onProgress: onProgress("full") });
+    reference = await runEval({ providers, tasks, router: false, onProgress: onProgress("full") });
 
     for (const ab of ABLATIONS) {
       process.stdout.write(theme.dim(`\nno ${ab.component}…\n`));
       applyArm(ab.env);
       const runs = await runEval({
         providers,
-        taskIds,
+        tasks,
         router: false,
         onProgress: onProgress(`no-${ab.component}`),
       });

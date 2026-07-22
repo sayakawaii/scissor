@@ -1,5 +1,5 @@
 import { exists, read, runNode, write } from "./task-helpers.js";
-import type { EvalTask } from "./tasks.js";
+import { EVAL_TASKS, type EvalTask } from "./tasks.js";
 
 // Bench tasks allow a slightly longer per-run budget than the quick eval suite.
 const node = (dir: string, cmd: string) => runNode(dir, cmd, 25_000);
@@ -231,4 +231,196 @@ export const BENCH_TASKS: EvalTask[] = [
       return { pass: true, detail: "checker passes (area fixed)" };
     },
   },
+  {
+    // Option D (OPEN_ITEMS §7d): a real-codebase-flavored task — the defect is
+    // one function buried in a larger, multi-directory tree with same-topic red
+    // herrings, so *locating* it (repo-map / retrieve) matters, not just editing.
+    // A near-naked harness must blindly grep/read many files; scaffolding should
+    // find it in fewer turns/tokens. Behavior is checked over several varied
+    // cases so a hardcoded return can't pass.
+    id: "buried-bug-fix",
+    title: "Find and fix a bug buried in a larger project tree",
+    tags: ["retrieve", "read", "edit", "debug", "multi-file", "real"],
+    timeoutMs: 240_000,
+    async setup(dir) {
+      // Noise modules across several directories so the tree looks real and the
+      // target isn't the only file.
+      const areas = ["utils", "models", "handlers", "services", "lib"];
+      for (const area of areas) {
+        for (let i = 0; i < 5; i++) {
+          await write(
+            dir,
+            `src/${area}/${area}${i}.js`,
+            `// ${area} helper ${i}\nfunction ${area}${i}(x) {\n  return x + ${i};\n}\nmodule.exports = { ${area}${i} };\n`,
+          );
+        }
+      }
+      // Same-topic red herrings: mention "discount" but are NOT the buggy code.
+      await write(
+        dir,
+        "src/models/discountRecord.js",
+        "// Data model for a stored discount; no calculation happens here.\n" +
+          "function makeDiscountRecord(code, pct) {\n  return { code, pct, createdAt: 0 };\n}\nmodule.exports = { makeDiscountRecord };\n",
+      );
+      await write(
+        dir,
+        "src/utils/formatDiscount.js",
+        "// Formats a discount percentage for display only.\n" +
+          "function formatDiscount(pct) {\n  return `${pct}% off`;\n}\nmodule.exports = { formatDiscount };\n",
+      );
+      // The real chain the check exercises. The bug is in discount.js.
+      await write(
+        dir,
+        "src/services/pricing/discount.js",
+        "// Apply a percentage discount to a price and return the new price.\n" +
+          "function applyDiscount(price, pct) {\n  return price - pct; // BUG: subtracts pct as an absolute amount, not a percentage\n}\nmodule.exports = { applyDiscount };\n",
+      );
+      await write(
+        dir,
+        "src/services/pricing/index.js",
+        "const { applyDiscount } = require('./discount.js');\nmodule.exports = { applyDiscount };\n",
+      );
+      await write(
+        dir,
+        "check.js",
+        [
+          "const { applyDiscount } = require('./src/services/pricing');",
+          "const cases = [[200, 10, 180], [50, 50, 25], [99, 0, 99], [100, 100, 0], [80, 25, 60]];",
+          "for (const [price, pct, exp] of cases) {",
+          "  const got = applyDiscount(price, pct);",
+          "  if (got !== exp) {",
+          "    console.error(`FAIL: applyDiscount(${price}, ${pct}) = ${got}, expected ${exp}`);",
+          "    process.exit(1);",
+          "  }",
+          "}",
+          "console.log('OK');",
+          "",
+        ].join("\n"),
+      );
+    },
+    prompt:
+      "Running `node check.js` fails: applyDiscount returns the wrong amount. The function lives somewhere under src/ in this project (which has many modules). Locate the offending function and fix it so `node check.js` prints OK. A percentage discount means the price is reduced by that percentage (e.g. a 10% discount on 200 is 180). Do not edit check.js.",
+    async check(dir) {
+      const r = await node(dir, "check.js");
+      if (!r.ok) return { pass: false, detail: `check still fails: ${r.out.slice(0, 100)}` };
+      if (!r.out.includes("OK")) {
+        return { pass: false, detail: `unexpected check output: ${JSON.stringify(r.out.slice(0, 80))}` };
+      }
+      // Guard against editing check.js instead of fixing the source.
+      const src = await read(dir, "src/services/pricing/discount.js");
+      if (/return\s+price\s*-\s*pct\b/.test(src)) {
+        return { pass: false, detail: "discount.js still subtracts pct as an absolute amount" };
+      }
+      return { pass: true, detail: "located and fixed applyDiscount; check passes" };
+    },
+  },
+  {
+    // Option D, harder tier: a bigger (~50-file) tree AND a *subtle* correctness
+    // bug — median of an even-length list must average the two middle values,
+    // but the code returns the upper-middle element. Odd-length inputs pass, so
+    // grepping/eyeballing isn't enough; the fix needs edge-case reasoning. Scored
+    // by an independent probe (not the on-disk check.js), so neutering check.js
+    // can't pass it.
+    id: "deep-median-bug",
+    title: "Fix a subtle even-length median bug in a large tree",
+    tags: ["retrieve", "read", "edit", "debug", "multi-file", "reason", "real"],
+    timeoutMs: 300_000,
+    async setup(dir) {
+      const areas = ["core", "services", "utils", "models", "handlers", "adapters"];
+      for (const area of areas) {
+        for (let i = 0; i < 8; i++) {
+          await write(
+            dir,
+            `src/${area}/${area}${i}.js`,
+            `// ${area} unit ${i}\nfunction ${area}${i}(x) {\n  return x * ${i + 1};\n}\nmodule.exports = { ${area}${i} };\n`,
+          );
+        }
+      }
+      // Same-topic red herrings: other statistics that are correct.
+      await write(
+        dir,
+        "src/analytics/mean.js",
+        "function mean(nums) {\n  if (nums.length === 0) return 0;\n  return nums.reduce((a, b) => a + b, 0) / nums.length;\n}\nmodule.exports = { mean };\n",
+      );
+      await write(
+        dir,
+        "src/analytics/mode.js",
+        "function mode(nums) {\n  const c = new Map();\n  let best = nums[0], bestN = 0;\n  for (const n of nums) { const k = (c.get(n) || 0) + 1; c.set(n, k); if (k > bestN) { bestN = k; best = n; } }\n  return best;\n}\nmodule.exports = { mode };\n",
+      );
+      // The buggy function, buried a couple of directories deep.
+      await write(
+        dir,
+        "src/analytics/summary/median.js",
+        "// Return the median of a list of numbers.\n" +
+          "function median(nums) {\n" +
+          "  const s = [...nums].sort((a, b) => a - b);\n" +
+          "  const mid = Math.floor(s.length / 2);\n" +
+          "  return s[mid]; // BUG: for even-length input, average s[mid - 1] and s[mid]\n" +
+          "}\n" +
+          "module.exports = { median };\n",
+      );
+      await write(
+        dir,
+        "src/analytics/summary/index.js",
+        "const { median } = require('./median.js');\nmodule.exports = { median };\n",
+      );
+      await write(
+        dir,
+        "check.js",
+        [
+          "const { median } = require('./src/analytics/summary');",
+          "const cases = [[[3, 1, 2], 2], [[1, 2, 3, 4], 2.5], [[10, 20, 30, 40, 50, 60], 35]];",
+          "for (const [nums, exp] of cases) {",
+          "  const got = median(nums);",
+          "  if (got !== exp) {",
+          "    console.error(`FAIL: median(${JSON.stringify(nums)}) = ${got}, expected ${exp}`);",
+          "    process.exit(1);",
+          "  }",
+          "}",
+          "console.log('OK');",
+          "",
+        ].join("\n"),
+      );
+    },
+    prompt:
+      "Running `node check.js` fails. Somewhere under src/ a statistics function returns the wrong value for some inputs. Find the offending function and fix it so `node check.js` prints OK. Note: the median of an even-length list is the average of its two middle values. Do not edit check.js.",
+    async check(dir) {
+      // Score with our own probe so editing check.js can't help.
+      const probe = [
+        "const { median } = require('./src/analytics/summary');",
+        "const cases = [",
+        "  [[3, 1, 2], 2],",
+        "  [[5], 5],",
+        "  [[1, 2, 3, 4], 2.5],",
+        "  [[10, 20, 30, 40, 50, 60], 35],",
+        "  [[4, 1, 3, 2, 6, 5], 3.5],",
+        "  [[7, 7, 8, 9], 7.5],",
+        "];",
+        "for (const [nums, exp] of cases) {",
+        "  const got = median(nums);",
+        "  if (Math.abs(got - exp) > 1e-9) throw new Error(`median(${JSON.stringify(nums)})=${got}, expected ${exp}`);",
+        "}",
+        "console.log('OK');",
+        "",
+      ].join("\n");
+      await write(dir, "__probe_median.js", probe);
+      const r = await node(dir, "__probe_median.js");
+      if (!r.ok) return { pass: false, detail: `median still wrong: ${r.out.slice(0, 120)}` };
+      return r.out.includes("OK")
+        ? { pass: true, detail: "even-length median fixed (probe passes)" }
+        : { pass: false, detail: `probe output: ${JSON.stringify(r.out.slice(0, 80))}` };
+    },
+  },
 ];
+
+/**
+ * Resolve task ids across BOTH the quick eval suite and the harder bench suite.
+ * With no ids, returns the eval suite (unchanged default for `scissor eval`);
+ * with ids, an id may name an eval OR a bench task — so comparison commands
+ * (`ab`, `ablate`) can target harder tasks like `buried-bug-fix`.
+ */
+export function resolveTasks(ids?: string[]): EvalTask[] {
+  if (!ids || ids.length === 0) return EVAL_TASKS;
+  const set = new Set(ids);
+  return [...EVAL_TASKS, ...BENCH_TASKS].filter((t) => set.has(t.id));
+}

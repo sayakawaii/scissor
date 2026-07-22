@@ -282,13 +282,29 @@ pass rate + tokens/task + est. cost/task; repeat N times for stochasticity.
   (`packages/cli/src/commands/ablate.ts`, `buildAblation`/`formatAblation` in
   `eval/compare.ts`; deterministic `scripts/test-ablate.mts`.) Extend with more
   knobs (router, experience-advice, clarify) as they prove interesting.
-- [ ] **(D) Real-codebase task set (Databricks-faithful)**: curate a harder
+- [~] **(D) Real-codebase task set (Databricks-faithful)**: curate a harder
   benchmark of real, reviewed tasks on a real repo (scissor itself and/or a chosen
   OSS repo) via `eval-gen` from actual sessions, instead of the small synthetic
   eval/bench tasks — addresses "SWE-bench doesn't reflect your codebase". Highest
   fidelity/signal; largest effort (task curation + trustworthy checks).
-- [ ] Run each arm N times and report mean ± spread (LLM runs are stochastic);
-  a single run can mislead, especially on the small task set.
+  - [x] First differentiating case: `buried-bug-fix` bench task — a defect in one
+    function buried in a larger multi-directory tree with same-topic red herrings,
+    so *locating* it (repo-map/retrieve) matters and a near-naked harness must
+    blind-grep. Behavior checked over several varied cases (hardcode-resistant).
+    (`bench-tasks.ts`; deterministic coverage in `scripts/test-bench.mts`.)
+  - [~] Grow into a dedicated harder tier (more buried/multi-file tasks; larger
+    trees) and distill real ones from traced sessions via `eval-gen`. Added
+    `deep-median-bug`: a ~50-file tree with a *subtle* even-length median bug
+    (odd-length inputs pass, so it needs edge-case reasoning, not just grep),
+    probe-scored so editing `check.js` can't pass it.
+  - [ ] Curate reviewed tasks on scissor's own repo / a chosen OSS repo with
+    trustworthy checks (the high-fidelity, high-effort end).
+- [x] Run each arm N times and report mean ± spread (LLM runs are stochastic;
+  a single run misleads). `scissor ab --runs N` repeats both arms and reports
+  per-arm mean/min/max/σ of tasks passed, mean tokens/cost per task, the mean
+  pass delta, and a per-task pass-rate table for the tasks that differ.
+  (`packages/cli/src/eval/repeat.ts`; deterministic `scripts/test-repeat.mts`.)
+  Still TODO: an `--runs` equivalent for `scissor ablate`.
 - [ ] Add an external-harness arm (e.g. Pi/aider) via the existing
   `--agent custom --agent-cmd` adapter for a third reference point (their token
   cost isn't in-process, so cost there is out of scope unless the CLI reports it).

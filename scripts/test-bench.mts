@@ -157,5 +157,78 @@ async function helper(name: string, body: string): Promise<string> {
   assert.equal(runs[0]!.passed, 1, "template agent ran and {PROMPT} was substituted");
 }
 
+// --- buried-bug-fix (Option D): the setup is buggy and the check discriminates
+// the correct percentage fix from both the original bug and a hardcoded cheat ---
+{
+  const t = task("buried-bug-fix");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "scissor-buried-"));
+  await t.setup!(dir);
+  const discountPath = path.join(dir, "src/services/pricing/discount.js");
+
+  // As-scaffolded (bug present): check must fail.
+  const before = await t.check(dir, "");
+  assert.equal(before.pass, false, "buried-bug-fix fails before the fix");
+
+  // Correct percentage fix: check must pass over all varied cases.
+  await fs.writeFile(
+    discountPath,
+    "function applyDiscount(price, pct) {\n  return (price * (100 - pct)) / 100;\n}\nmodule.exports = { applyDiscount };\n",
+    "utf8",
+  );
+  const after = await t.check(dir, "");
+  assert.equal(after.pass, true, "buried-bug-fix passes after the correct fix");
+
+  // Hardcoding a single expected value must NOT pass (cases vary).
+  await fs.writeFile(
+    discountPath,
+    "function applyDiscount(price, pct) {\n  return 180;\n}\nmodule.exports = { applyDiscount };\n",
+    "utf8",
+  );
+  const cheat = await t.check(dir, "");
+  assert.equal(cheat.pass, false, "hardcoded return does not satisfy the varied cases");
+
+  await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+}
+
+// --- deep-median-bug (Option D, harder tier): the subtle even-length bug fails
+// as-scaffolded, the correct averaging fix passes, and an odd-only "fix" that
+// leaves even-length wrong is rejected (probe-scored, independent of check.js) ---
+{
+  const t = task("deep-median-bug");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "scissor-median-"));
+  await t.setup!(dir);
+  const medianPath = path.join(dir, "src/analytics/summary/median.js");
+
+  const before = await t.check(dir, "");
+  assert.equal(before.pass, false, "deep-median-bug fails before the fix");
+
+  // Correct fix: average the two middle values for even-length input.
+  await fs.writeFile(
+    medianPath,
+    "function median(nums) {\n" +
+      "  const s = [...nums].sort((a, b) => a - b);\n" +
+      "  const mid = Math.floor(s.length / 2);\n" +
+      "  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;\n" +
+      "}\nmodule.exports = { median };\n",
+    "utf8",
+  );
+  const after = await t.check(dir, "");
+  assert.equal(after.pass, true, "deep-median-bug passes after the correct fix");
+
+  // A change that still returns the upper-middle for even length must NOT pass.
+  await fs.writeFile(
+    medianPath,
+    "function median(nums) {\n" +
+      "  const s = [...nums].sort((a, b) => a - b);\n" +
+      "  return s[Math.floor(s.length / 2)];\n" +
+      "}\nmodule.exports = { median };\n",
+    "utf8",
+  );
+  const stillWrong = await t.check(dir, "");
+  assert.equal(stillWrong.pass, false, "upper-middle-only still fails even-length cases");
+
+  await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+}
+
 await fs.rm(helperDir, { recursive: true, force: true }).catch(() => {});
 process.stdout.write("\x1b[32mtest-bench: ALL PASS\x1b[0m\n");

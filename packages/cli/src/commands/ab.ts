@@ -1,13 +1,17 @@
 import { applyEnvOverrides, loadConfig, PROVIDER_IDS, type ProviderId } from "@scissor/core";
 import { theme } from "../ui/render.js";
 import { runEval, type ProgressEvent, type ProviderRun } from "../eval/runner.js";
+import { resolveTasks } from "../eval/bench-tasks.js";
 import { compareRuns, formatComparison } from "../eval/compare.js";
+import { aggregateArm, formatRepeatedComparison } from "../eval/repeat.js";
 
 export interface AbCommandOptions {
   provider?: string;
   task?: string;
   /** Which experience-layer policy to test as the candidate arm. */
   candidate?: string;
+  /** Repeat each arm N times and report mean ± spread (default 1). */
+  runs?: string;
   /** Exit non-zero if the candidate breaks any task. */
   strict?: boolean;
 }
@@ -96,6 +100,13 @@ export async function runAbCommand(opts: AbCommandOptions): Promise<number> {
     return 2;
   }
   const taskIds = parseList(opts.task);
+  const tasks = resolveTasks(taskIds);
+  if (taskIds && tasks.length === 0) {
+    process.stderr.write(theme.err(`No tasks matched: ${taskIds.join(", ")}\n`));
+    return 2;
+  }
+
+  const runs = Math.max(1, Math.floor(Number(opts.runs ?? 1)) || 1);
 
   const candidateLabel =
     candidate === "advice" ? "advice-on" : candidate === "route" ? "route-enforce" : "scissor";
@@ -103,42 +114,67 @@ export async function runAbCommand(opts: AbCommandOptions): Promise<number> {
   process.stdout.write(
     theme.brand("scissor ab") +
       theme.dim(
-        ` · ${providers.join(", ")} · tasks: ${taskIds?.join(", ") ?? "all"} · ${baselineLabel} vs ${candidateLabel}\n`,
+        ` · ${providers.join(", ")} · tasks: ${taskIds?.join(", ") ?? "all"} · ${baselineLabel} vs ${candidateLabel}` +
+          (runs > 1 ? ` · ${runs} runs` : "") +
+          "\n",
       ),
   );
 
-  const saved = snapshotEnv();
-  let baseline: ProviderRun[];
-  let candidateRuns: ProviderRun[];
-  try {
+  // One iteration of each arm. Env is applied inside so it's correct per arm
+  // and re-applied every iteration. Both arms hold the model fixed for `bare`.
+  const runBaselineOnce = async (): Promise<ProviderRun[]> => {
     if (candidate === "bare") {
-      // Hold the model fixed: experience + router off in both arms.
       applyArm(null);
-      process.stdout.write(theme.dim("\nbaseline (bare minimal harness)…\n"));
-      baseline = await runEval({ providers, taskIds, bare: true, onProgress: onProgress("bare") });
-      process.stdout.write(theme.dim("\ncandidate (full scissor)…\n"));
-      candidateRuns = await runEval({
-        providers,
-        taskIds,
-        router: false,
-        onProgress: onProgress("scissor"),
-      });
-    } else {
-      process.stdout.write(theme.dim("\nbaseline (experience off)…\n"));
+      return relabel(await runEval({ providers, tasks, bare: true, onProgress: onProgress("bare") }), providers);
+    }
+    applyArm(null);
+    return relabel(await runEval({ providers, tasks, onProgress: onProgress("base") }), providers);
+  };
+  const runCandidateOnce = async (): Promise<ProviderRun[]> => {
+    if (candidate === "bare") {
       applyArm(null);
-      baseline = await runEval({ providers, taskIds, onProgress: onProgress("base") });
+      return relabel(await runEval({ providers, tasks, router: false, onProgress: onProgress("scissor") }), providers);
+    }
+    applyArm(candidate);
+    return relabel(await runEval({ providers, tasks, onProgress: onProgress("cand") }), providers);
+  };
+
+  const saved = snapshotEnv();
+  const baseIters: ProviderRun[][] = [];
+  const candIters: ProviderRun[][] = [];
+  try {
+    for (let i = 0; i < runs; i++) {
+      if (runs > 1) process.stdout.write(theme.dim(`\n— run ${i + 1}/${runs} —`));
+      process.stdout.write(theme.dim(`\nbaseline (${baselineLabel})…\n`));
+      baseIters.push(await runBaselineOnce());
       process.stdout.write(theme.dim(`\ncandidate (${candidateLabel})…\n`));
-      applyArm(candidate);
-      candidateRuns = await runEval({ providers, taskIds, onProgress: onProgress("cand") });
+      candIters.push(await runCandidateOnce());
     }
   } finally {
     restoreEnv(saved);
   }
 
-  const cmp = compareRuns(relabel(baseline, providers), relabel(candidateRuns, providers));
+  if (runs === 1) {
+    const cmp = compareRuns(baseIters[0]!, candIters[0]!);
+    process.stdout.write(
+      "\n" +
+        formatComparison(cmp, { baseline: baselineLabel, candidate: candidateLabel }, {
+          bold: theme.bold,
+          dim: theme.dim,
+          ok: theme.ok,
+          warn: theme.warn,
+          err: theme.err,
+        }) +
+        "\n",
+    );
+    return opts.strict && cmp.broke.length > 0 ? 1 : 0;
+  }
+
+  const baseAgg = aggregateArm(baselineLabel, baseIters);
+  const candAgg = aggregateArm(candidateLabel, candIters);
   process.stdout.write(
     "\n" +
-      formatComparison(cmp, { baseline: baselineLabel, candidate: candidateLabel }, {
+      formatRepeatedComparison(baseAgg, candAgg, { baseline: baselineLabel, candidate: candidateLabel }, {
         bold: theme.bold,
         dim: theme.dim,
         ok: theme.ok,
@@ -147,6 +183,12 @@ export async function runAbCommand(opts: AbCommandOptions): Promise<number> {
       }) +
       "\n",
   );
-
-  return opts.strict && cmp.broke.length > 0 ? 1 : 0;
+  // Under --strict, fail if the candidate ever regressed a task that the
+  // baseline always passed (a per-task pass-rate drop).
+  const candById = new Map(candAgg.tasks.map((t) => [t.taskId, t]));
+  const regressed = baseAgg.tasks.some((bt) => {
+    const ct = candById.get(bt.taskId);
+    return ct && bt.passes === bt.runs && ct.passes < ct.runs;
+  });
+  return opts.strict && regressed ? 1 : 0;
 }
