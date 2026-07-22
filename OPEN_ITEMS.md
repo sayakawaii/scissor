@@ -273,11 +273,15 @@ pass rate + tokens/task + est. cost/task; repeat N times for stochasticity.
   Databricks-style cost-quality delta. Surfaced via `scissor ab --candidate bare`
   (baseline=bare, candidate=scissor, router+experience off → model fixed).
   (`packages/cli/src/eval/{runner,compare}.ts`, `commands/ab.ts`)
-- [ ] **(C) Ablation matrix over scissor's own scaffolding**: run the suite with
-  each component toggled (repo-map, retrieval, router, verify, experience-advice)
-  and produce a table of pass-rate & cost/token deltas — "which scaffolding earns
-  its token cost", the Databricks lesson applied inward. Mostly orchestration over
-  existing flags + the A/B cost machinery. **Next up after A+B.**
+- [x] **(C) Ablation matrix over scissor's own scaffolding**: `scissor ablate`
+  runs the suite full (reference) and once per component with it disabled
+  (repo-map / retrieve / verify-loop today; router held off so the model is
+  fixed), producing a pass/token/cost matrix — "which scaffolding earns its token
+  cost", the Databricks lesson applied inward. New env toggles `SCISSOR_NO_REPOMAP`
+  / `SCISSOR_NO_RETRIEVE` gate the previously always-on components.
+  (`packages/cli/src/commands/ablate.ts`, `buildAblation`/`formatAblation` in
+  `eval/compare.ts`; deterministic `scripts/test-ablate.mts`.) Extend with more
+  knobs (router, experience-advice, clarify) as they prove interesting.
 - [ ] **(D) Real-codebase task set (Databricks-faithful)**: curate a harder
   benchmark of real, reviewed tasks on a real repo (scissor itself and/or a chosen
   OSS repo) via `eval-gen` from actual sessions, instead of the small synthetic

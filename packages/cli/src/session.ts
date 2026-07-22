@@ -323,7 +323,12 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
       : "auto";
 
   const memory = await readMemory(workspaceRoot);
-  const repoMap = await buildRepoMap(workspaceRoot).catch(() => "");
+  // Scaffolding ablation toggles (OPEN_ITEMS §7d option C): let the ablation
+  // harness disable individual always-on components to measure their value.
+  // Off means "don't inject/expose"; default keeps everything on.
+  const repoMapDisabled = process.env.SCISSOR_NO_REPOMAP === "1";
+  const retrieveDisabled = process.env.SCISSOR_NO_RETRIEVE === "1";
+  const repoMap = repoMapDisabled ? "" : await buildRepoMap(workspaceRoot).catch(() => "");
 
   // Experience advisor (doc §5 Phase 3) and restricted auto-router (doc §5
   // Phase 4) are BOTH opt-in and off by default, so default agent behavior and
@@ -401,7 +406,8 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     ? undefined
     : await makeVerifier(workspaceRoot, { enabled: !opts.noVerify, tdd });
 
-  const baseTools = opts.chatOnly ? chatTools() : defaultTools({ selfEdit });
+  let baseTools = opts.chatOnly ? chatTools() : defaultTools({ selfEdit });
+  if (retrieveDisabled) baseTools = baseTools.filter((t) => t.name !== "retrieve");
   const mcp = await connectMcp(workspaceRoot, opts.mcp === true);
   const tools: Tool[] = mcp ? [...baseTools, ...mcp.tools] : baseTools;
   const agent = new Agent({

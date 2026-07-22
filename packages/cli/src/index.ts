@@ -213,6 +213,17 @@ program
   });
 
 program
+  .command("ablate")
+  .description("ablation matrix: full scissor vs each scaffolding component disabled (pass/token/cost)")
+  .option("-p, --provider <ids>", "comma-separated providers (default: configured default)")
+  .option("-t, --task <ids>", "comma-separated task ids to run (default: all)")
+  .option("--strict", "exit non-zero if disabling any component improves pass rate")
+  .action(async (opts) => {
+    const { runAblateCommand } = await import("./commands/ablate.js");
+    process.exit(await runAblateCommand(opts));
+  });
+
+program
   .command("eval-gen [idOrPath]")
   .description("generate a draft regression eval case from a session trace (default: latest)")
   .option("--out <path>", "write the draft to this file")

@@ -160,6 +160,53 @@ function accrueCost(acc: ArmCost, r: TaskResult): void {
   else acc.costKnown = false;
 }
 
+/** One row of an ablation matrix: the effect of disabling a single component. */
+export interface AblationRow {
+  /** Human name of the disabled component, e.g. "repo-map". */
+  component: string;
+  /** Tasks passing with the component ON (reference) vs OFF (arm). */
+  refPass: number;
+  armPass: number;
+  total: number;
+  /** armPass - refPass. Negative => the component was helping (removing it hurt). */
+  passDelta: number;
+  refTokensPerTask?: number;
+  armTokensPerTask?: number;
+  refCostPerTask?: number;
+  armCostPerTask?: number;
+}
+
+export interface AblationArm {
+  component: string;
+  runs: ProviderRun[];
+}
+
+/**
+ * Build an ablation matrix: compare a full-scaffolding reference run against
+ * arms that each disable one component. Rows quantify what each component
+ * contributes to pass rate and what it costs in tokens/$. Pure/deterministic.
+ */
+export function buildAblation(reference: ProviderRun[], arms: AblationArm[]): AblationRow[] {
+  return arms.map((arm) => {
+    const cmp = compareRuns(reference, arm.runs);
+    const n = cmp.compared || 1;
+    const refTok = cmp.baselineCost.tokensKnown ? Math.round(cmp.baselineCost.tokens / n) : undefined;
+    const armTok = cmp.candidateCost.tokensKnown ? Math.round(cmp.candidateCost.tokens / n) : undefined;
+    const priced = cmp.baselineCost.costKnown && cmp.candidateCost.costKnown && cmp.compared > 0;
+    return {
+      component: arm.component,
+      refPass: cmp.baselinePassed,
+      armPass: cmp.candidatePassed,
+      total: cmp.compared,
+      passDelta: cmp.passDelta,
+      refTokensPerTask: refTok,
+      armTokensPerTask: armTok,
+      refCostPerTask: priced ? cmp.baselineCost.costUsd / n : undefined,
+      armCostPerTask: priced ? cmp.candidateCost.costUsd / n : undefined,
+    };
+  });
+}
+
 export interface CompareColors {
   bold?: (s: string) => string;
   dim?: (s: string) => string;
@@ -227,5 +274,62 @@ export function formatComparison(
   if (cmp.broke.length > 0) {
     lines.push(err(`  regression: candidate broke ${cmp.broke.length} task(s)`));
   }
+  return lines.join("\n");
+}
+
+/**
+ * Render an ablation matrix as a table. Each row is one component turned OFF,
+ * relative to the full-scaffolding reference. A negative pass delta means the
+ * component earned its keep (removing it lost tasks); a large token/cost drop
+ * with a zero pass delta means the component spent tokens for no measured gain.
+ */
+export function formatAblation(
+  reference: { pass: number; total: number; tokensPerTask?: number; costPerTask?: number },
+  rows: AblationRow[],
+  c: CompareColors = {},
+): string {
+  const bold = c.bold ?? ((s: string) => s);
+  const dim = c.dim ?? ((s: string) => s);
+  const ok = c.ok ?? ((s: string) => s);
+  const err = c.err ?? ((s: string) => s);
+  const lines: string[] = [];
+  lines.push(bold("Ablation matrix — full scissor vs each component disabled"));
+
+  const refCost = reference.costPerTask !== undefined ? usd(reference.costPerTask) : "n/a";
+  const refTok = reference.tokensPerTask !== undefined ? String(reference.tokensPerTask) : "n/a";
+  lines.push(
+    dim(`  reference (full): ${reference.pass}/${reference.total} pass · ${refTok} tok/task · ${refCost}/task`),
+  );
+  lines.push("");
+  lines.push(
+    dim("  component off".padEnd(22) + "pass".padEnd(12) + "tok/task".padEnd(16) + "cost/task"),
+  );
+
+  for (const r of rows) {
+    const passCol = `${r.armPass}/${r.total}`;
+    let delta: string;
+    if (r.passDelta < 0) delta = ok(` (${r.passDelta})`); // component helped
+    else if (r.passDelta > 0) delta = err(` (+${r.passDelta})`); // component hurt
+    else delta = dim(" (=)");
+    const tok =
+      r.refTokensPerTask !== undefined && r.armTokensPerTask !== undefined
+        ? `${r.refTokensPerTask}\u2192${r.armTokensPerTask}`
+        : "n/a";
+    const cost =
+      r.refCostPerTask !== undefined && r.armCostPerTask !== undefined
+        ? `${usd(r.refCostPerTask)}\u2192${usd(r.armCostPerTask)}`
+        : "n/a";
+    lines.push(
+      "  " +
+        r.component.padEnd(20) +
+        (passCol + delta).padEnd(20) +
+        tok.padEnd(16) +
+        cost,
+    );
+  }
+  lines.push("");
+  lines.push(
+    dim("  pass col: value with component OFF; (\u2212n) it earned its keep, (+n) it hurt, (=) no change"),
+  );
   return lines.join("\n");
 }
