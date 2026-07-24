@@ -1,3 +1,4 @@
+import type { OperatingPoint } from "./experience/estimator.js";
 import { isSourceFile, isTestFile } from "./tdd.js";
 import type { ApprovalPolicy, Guardrail, Tool, ToolCall, ToolPreview } from "./types.js";
 
@@ -88,6 +89,50 @@ export function createTddGuard(): Guardrail {
     },
     reset() {
       testFileTouched = false;
+    },
+  };
+}
+
+/** Tools that gather broad/repo-wide context — skipped on a confident local edit. */
+const BROAD_CONTEXT_TOOLS = new Set(["retrieve"]);
+
+/** A localized single-site edit we're confident about → the E3 level-1 fast path. */
+function isConfidentLocal(op: OperatingPoint | undefined): boolean {
+  return !!op && op.difficulty === 1 && op.scope === "local" && op.confidence >= 0.7;
+}
+
+/**
+ * E3 "Execute the minimum viable path" guard (Phase 2; arXiv:2607.13034 §4.3).
+ *
+ * When the up-front estimate judges the task a confident, localized single-file
+ * edit, broad context-gathering (semantic `retrieve`) is wasted budget — level 1
+ * is "localize the one site and edit it". This vetoes those tools for that run
+ * and nudges the agent to read the named file directly. It is deliberately
+ * conservative: it fires ONLY on difficulty-1/local/high-confidence estimates
+ * (vague "find the bug" prompts estimate as difficulty-2 and are untouched), and
+ * the Expand stage recovers a mis-scoped task on verification failure. Opt-in via
+ * the caller (off by default), reading the current run's operating point through
+ * `getOp` so it always reflects the task in flight.
+ */
+export function createMinViablePathGuard(getOp: () => OperatingPoint | undefined): Guardrail {
+  return {
+    name: "min-viable-path",
+    beforeTool(call) {
+      if (!BROAD_CONTEXT_TOOLS.has(call.name) || !isConfidentLocal(getOp())) {
+        return { allow: true };
+      }
+      return {
+        allow: false,
+        reason: "min-viable-path",
+        result: {
+          content:
+            "Skipped broad retrieval: this task was estimated as a localized single-file edit " +
+            "(E3 minimum-viable path). Read the specific file(s) named in the request directly " +
+            "instead. If you cannot locate the target that way, proceed with your best attempt — " +
+            "scope will widen automatically if verification fails.",
+          isError: false,
+        },
+      };
     },
   };
 }

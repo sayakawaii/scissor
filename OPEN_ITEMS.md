@@ -447,10 +447,25 @@ real gains → **measure before building.**
   `estimate` trace event (secret-free). No behavior change yet. Deterministic
   `scripts/test-estimator.mts`; verified live (a localized prompt recorded
   `difficulty:1, scope:local, confidence:0.8`).
-- [ ] **Phase 2 — Execute minimum viable path.** Drive the existing
-  `SCISSOR_NO_REPOMAP`/`SCISSOR_NO_RETRIEVE` gates *from* `x₀`: low-difficulty
-  localized edits skip repo-map/heavy retrieval; higher scope enables dependency
-  tracing. Guardrail-based, reversible.
+- [x] **Phase 2 — Execute minimum viable path.** A guardrail
+  (`createMinViablePathGuard`, guardrails.ts) drives context-gathering *from*
+  `x₀`: on a confident localized edit (`difficulty:1 / scope:local /
+  confidence≥0.7`) it vetoes the broad semantic `retrieve` tool for that run and
+  feeds back a non-error nudge to read the named file directly — the paper's
+  level-1 fast path (§4.3). Deliberately conservative: vague "find the bug"
+  prompts estimate as `difficulty:2` and are untouched (they genuinely need
+  retrieval), and a probe-widened low-confidence local estimate is left alone for
+  Expand to recover. Opt-in via `SCISSOR_ESTIMATE_EXECUTE=1` (off by default, so
+  the default agent and the eval gate are unchanged); `Agent.run` stores the
+  operating point and the guard reads it lazily so it always reflects the task in
+  flight. Deterministic test `scripts/test-estimate-execute.mts` asserts the veto
+  fires on a local estimate and is a no-op for cross-file / repo / low-confidence
+  / absent estimates and for non-broad tools. Measure the token/ACRR delta at
+  equal pass with `SCISSOR_ESTIMATE_EXECUTE=1 scissor ab` on a localized task
+  (e.g. `edit-json`) vs the default. Repo-map gating (skip the injected repo-map
+  block on a local estimate) is a follow-up — it needs the prompt-assembly to
+  move behind the estimate, whereas `retrieve` slotted cleanly into the existing
+  guardrail pipeline.
 - [ ] **Phase 3 — Expand.** On verify failure / low confidence, bump a bounded
   scope level (reuse prior search hits, don't restart) and replan. The paper's
   ablation shows Expand is the safety net (removing it drops success to 85%), so

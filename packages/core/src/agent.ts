@@ -1,7 +1,7 @@
 import { CONTROL_TOOL_NAMES } from "./tools/control.js";
 import { buildSystemPrompt, CLARIFY_GUIDANCE } from "./prompt.js";
 import { isVagueRequest } from "./intent.js";
-import { createApprovalGuard, createTddGuard } from "./guardrails.js";
+import { createApprovalGuard, createMinViablePathGuard, createTddGuard } from "./guardrails.js";
 import { estimateOperatingPoint, type OperatingPoint } from "./experience/estimator.js";
 import type {
   ApprovalDecision,
@@ -195,6 +195,8 @@ export class Agent {
   private autoClarify: boolean;
   /** True only for the duration of a run whose input was flagged vague. */
   private clarifyActive = false;
+  /** E3 operating point for the run in flight (set in run() when estimation is on). */
+  private currentEstimate?: OperatingPoint;
 
   constructor(opts: AgentOptions) {
     this.provider = opts.provider;
@@ -219,6 +221,12 @@ export class Agent {
     // gate so we only prompt for calls that passed the earlier policy checks.
     this.guardrails = [
       ...(opts.tddMode ? [createTddGuard()] : []),
+      // E3 Phase 2: skip broad retrieval on a confident localized edit. Opt-in
+      // (off by default) so normal runs and the eval gate are unchanged; reads
+      // the run's operating point lazily so it always reflects the task in flight.
+      ...(process.env.SCISSOR_ESTIMATE_EXECUTE === "1"
+        ? [createMinViablePathGuard(() => this.currentEstimate)]
+        : []),
       ...(opts.guardrails ?? []),
       createApprovalGuard(),
     ];
@@ -305,11 +313,16 @@ export class Agent {
   ): Promise<RunResult> {
     this.messages.push({ role: "user", content: userInput });
 
-    // E3 Estimate stage (observe-only, Phase 1): judge the task's execution scope
-    // up front and surface it. It does NOT yet change what context is gathered —
-    // that is Phase 2. Gated so default behavior is unchanged (OPEN_ITEMS §7e).
-    if (process.env.SCISSOR_ESTIMATE && callbacks.onEstimate) {
-      callbacks.onEstimate(estimateOperatingPoint({ query: userInput }));
+    // E3 Estimate stage (Phase 1 observe / Phase 2 execute): judge the task's
+    // execution scope up front. SCISSOR_ESTIMATE surfaces it (observe-only);
+    // SCISSOR_ESTIMATE_EXECUTE additionally drives the min-viable-path guard,
+    // which reads this.currentEstimate. Both are off by default so the default
+    // behavior and the eval gate are unchanged (OPEN_ITEMS §7e).
+    if (process.env.SCISSOR_ESTIMATE || process.env.SCISSOR_ESTIMATE_EXECUTE) {
+      this.currentEstimate = estimateOperatingPoint({ query: userInput });
+      callbacks.onEstimate?.(this.currentEstimate);
+    } else {
+      this.currentEstimate = undefined;
     }
 
     // Auto intent-clarification: only for this run, and only when the input

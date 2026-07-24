@@ -105,6 +105,30 @@ twice the minimum; higher ≈ more over-reading.
   whether an E3-style scope estimator is worth building. Expect the effect to be
   **real but modest** on a frontier model, exactly as the paper's LLM-Case found.
 
+## Acting on the estimate (E3 Execute — `SCISSOR_ESTIMATE_EXECUTE`)
+
+Phase 1 only *records* the scope estimate `x₀`; **Phase 2** acts on it. With
+`SCISSOR_ESTIMATE_EXECUTE=1`, a guardrail runs the paper's level-1 fast path: on
+a *confident localized* estimate (`difficulty:1 / scope:local / confidence≥0.7`
+— i.e. the request names a file or quoted symbol and a small change) it skips the
+broad semantic `retrieve` tool and tells the agent to read the named file
+directly. It is conservative by design — vague "find the bug somewhere" prompts
+estimate as `difficulty:2` and keep full retrieval, and a run that starts local
+but touches many sites is left alone for the (upcoming) Expand stage.
+
+Off by default, so the default agent and the eval gate are unchanged. To measure
+the token / over-reading delta at equal pass rate on a genuinely localized task:
+
+```bash
+# baseline (full context) vs. minimum-viable path, same task
+scissor ab --candidate scissor -t edit-json --runs 3
+SCISSOR_ESTIMATE_EXECUTE=1 scissor ab --candidate scissor -t edit-json --runs 3
+```
+
+A win looks like: same pass rate, fewer `files/task` and lower `over-read (ACRR
+files)`, fewer tokens. If pass rate drops, the estimator was over-confident on
+that task — tighten the cues in `estimator.ts` or lower the confidence gate.
+
 ## Scheme A — retrieval QA on a real codebase (`iop-toolkit` backend)
 
 Read-only questions over a real ~190-file Go service; each answer is a precise
