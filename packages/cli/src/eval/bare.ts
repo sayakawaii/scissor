@@ -28,7 +28,7 @@ import {
   type ProviderId,
 } from "@scissor/core";
 import type { AgentTarget } from "./runner.js";
-import { usageAccumulator } from "./runner.js";
+import { trajectoryAccumulator, usageAccumulator } from "./runner.js";
 
 const BARE_SYSTEM_PROMPT =
   "You are a coding assistant working in the current directory. Use the read, write, edit, " +
@@ -66,6 +66,7 @@ export function bareTarget(opts: BareTargetOptions = {}): AgentTarget {
       });
 
       const usage = usageAccumulator();
+      const traj = trajectoryAccumulator();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
@@ -76,6 +77,7 @@ export function bareTarget(opts: BareTargetOptions = {}): AgentTarget {
             onPresentPlan: async () => ({ action: "approve" as const }),
             onAskUser: async () => "proceed",
             onUsage: usage.onUsage,
+            onToolEnd: traj.onToolEnd,
           },
           controller.signal,
         );
@@ -87,6 +89,8 @@ export function bareTarget(opts: BareTargetOptions = {}): AgentTarget {
           detail: res.aborted ? "timed out" : undefined,
           promptTokens: usage.totals.promptTokens,
           completionTokens: usage.totals.completionTokens,
+          toolCalls: traj.totals.toolCalls,
+          inspectedFiles: traj.totals.files.size,
         };
       } finally {
         clearTimeout(timer);

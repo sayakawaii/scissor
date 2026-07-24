@@ -56,6 +56,8 @@ function qa(id: string, prompt: string, needles: string[], detail: string): Eval
     title: prompt.length > 64 ? prompt.slice(0, 61) + "..." : prompt,
     tags: ["retrieve", "qa", "real", "iop"],
     timeoutMs: 180_000,
+    // Each answer lives in exactly one file; a lean policy inspects ~1 file.
+    oracle: { files: 1 },
     setup: copyBackendInto,
     prompt,
     async check(_dir, finalText) {

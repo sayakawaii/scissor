@@ -31,6 +31,32 @@ the iop-toolkit backend's `omciSchema/util.go`). Target it directly:
 scissor ab --candidate bare --runs 3 -t omci-uint40-decode-bug
 ```
 
+## Reading the over-reading (ACRR) numbers
+
+Beyond pass/tokens/cost, `ab` and `ablate` now report an **over-reading** view
+grounded in Yin & Feng, *"Do AI Agents Know When a Task Is Simple?"*
+(arXiv:2607.13034): the **files/task** an arm pulls into context, and the
+**ACRR** (Agent Cognitive Redundancy Ratio) = `(files_actual − files_min) /
+files_min` against each task's oracle minimum. `0` ≈ oracle-lean; `1` ≈ read
+twice the minimum; higher ≈ more over-reading.
+
+```
+  files/task: bare 1.2  →  scissor 4.1   (3.42x more)
+  over-read (ACRR files): bare 0.20  →  scissor 3.10   min 1.0 file/task
+```
+
+- Only tasks annotated with an `oracle` (min files) contribute to ACRR — the
+  real tasks (`iop-*`, `go-*`, `buried-bug-fix`, `deep-median-bug`,
+  `omci-uint40-decode-bug`) all set `files: 1`, since their answer/fix lives in
+  one file. Files are a proxy: distinct paths passed to `read_file`/`edit_file`/
+  `write_file`.
+- In `scissor ablate`, the matrix gains a **files/task** column, so you can see
+  which component (repo-map / retrieve) is responsible for the extra reads — a
+  large files drop with a **`(=)`** pass delta means it spent reads for no gain
+  on these tasks. This is the Phase-0 measurement (OPEN_ITEMS §7e) that decides
+  whether an E3-style scope estimator is worth building. Expect the effect to be
+  **real but modest** on a frontier model, exactly as the paper's LLM-Case found.
+
 ## Scheme A — retrieval QA on a real codebase (`iop-toolkit` backend)
 
 Read-only questions over a real ~190-file Go service; each answer is a precise

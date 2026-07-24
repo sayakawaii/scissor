@@ -278,6 +278,8 @@ export const GO_TASKS: EvalTask[] = [
     title: "Fix a subtle big-endian 40-bit decode bug (real go test)",
     tags: ["retrieve", "read", "edit", "debug", "multi-file", "reason", "real", "go"],
     timeoutMs: 360_000,
+    // The bug and fix live in one decoder file among several packages.
+    oracle: { files: 1 },
     setup: setupModule,
     prompt:
       "This is a Go module. Running `go test ./...` fails: a big-endian byte-to-integer decoder returns the wrong value for some inputs. The module has several packages; locate the offending function and fix it so `go test ./...` passes. The decoder reads big-endian unsigned integers of a given byte width; the 5-byte (40-bit) width is wrong for larger values. Do not edit any _test.go files.",
@@ -311,6 +313,8 @@ export const GO_TASKS: EvalTask[] = [
     title: "Fix a real slice-out-of-range panic on short OMCI payloads (go test)",
     tags: ["retrieve", "read", "edit", "debug", "reason", "real", "go", "historical"],
     timeoutMs: 360_000,
+    // The clamp fix lives in the single schema-decoder file.
+    oracle: { files: 1 },
     setup: setupSchemaModule,
     prompt:
       "This is a Go module. Running `go test ./...` fails: decoding a managed-entity schema panics with a slice out-of-range error when the received payload is shorter than the schema's declared attribute sizes (this happens for proprietary MEs only present in the default schema). Locate the offending decoder and fix it so `go test ./...` passes — a declared attribute that runs past the payload must be clamped to what was actually received, not cause a panic. Do not edit any _test.go files.",

@@ -76,19 +76,25 @@ const onProgress =
     }
   };
 
-/** Aggregate a reference run into a header summary (pass, tokens/task, cost/task). */
+/** Aggregate a reference run into a header summary (pass, tokens/task, cost/task, files/task, ACRR). */
 function summarize(runs: ProviderRun[]): {
   pass: number;
   total: number;
   tokensPerTask?: number;
   costPerTask?: number;
+  filesPerTask?: number;
+  acrr?: number;
 } {
   let pass = 0;
   let total = 0;
   let tokens = 0;
   let cost = 0;
+  let files = 0;
+  let oracleFiles = 0;
   let tokensKnown = false;
   let costKnown = true;
+  let filesKnown = false;
+  let oracleKnown = false;
   for (const run of runs) {
     for (const r of run.results) {
       total++;
@@ -99,6 +105,14 @@ function summarize(runs: ProviderRun[]): {
       }
       if (r.costUsd !== undefined) cost += r.costUsd;
       else costKnown = false;
+      if (r.inspectedFiles !== undefined) {
+        files += r.inspectedFiles;
+        filesKnown = true;
+      }
+      if (r.oracleFiles !== undefined) {
+        oracleFiles += r.oracleFiles;
+        oracleKnown = true;
+      }
     }
   }
   const n = total || 1;
@@ -107,6 +121,8 @@ function summarize(runs: ProviderRun[]): {
     total,
     tokensPerTask: tokensKnown ? Math.round(tokens / n) : undefined,
     costPerTask: costKnown && total > 0 ? cost / n : undefined,
+    filesPerTask: filesKnown ? files / n : undefined,
+    acrr: filesKnown && oracleKnown && oracleFiles > 0 ? (files - oracleFiles) / oracleFiles : undefined,
   };
 }
 

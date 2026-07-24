@@ -23,6 +23,14 @@ export interface TaskResult {
   completionTokens?: number;
   /** Estimated USD cost for this task (when the model has a known price). */
   costUsd?: number;
+  /** Total (non-error) tool calls the agent made (trajectory length). */
+  toolCalls?: number;
+  /** Distinct files the agent read/edited/wrote — a proxy for "inspected files". */
+  inspectedFiles?: number;
+  /** Oracle minimum-sufficient file count for this task (when annotated). */
+  oracleFiles?: number;
+  /** Oracle minimum-sufficient token floor for this task (when annotated). */
+  oracleTokens?: number;
 }
 
 export interface ProviderRun {
@@ -94,6 +102,10 @@ export interface TargetRunResult {
   /** Tokens consumed (when the target can report them; external CLIs cannot). */
   promptTokens?: number;
   completionTokens?: number;
+  /** Non-error tool calls made (trajectory length), when the target can report it. */
+  toolCalls?: number;
+  /** Distinct files read/edited/written (inspected-files proxy), when reportable. */
+  inspectedFiles?: number;
 }
 
 /** How the agent under test runs a single task inside a prepared workspace. */
@@ -113,6 +125,36 @@ export function usageAccumulator(): {
     onUsage: (u) => {
       totals.promptTokens += u.promptTokens ?? 0;
       totals.completionTokens += u.completionTokens ?? 0;
+    },
+  };
+}
+
+/** Tool names that pull a specific file into context (the "inspected files" axis). */
+const FILE_TOOLS = new Set(["read_file", "write_file", "edit_file"]);
+
+/**
+ * A callback fragment that measures trajectory shape: how many (non-error) tool
+ * calls the agent made, and the distinct files it pulled into context. This is
+ * the raw material for an ACRR-style over-reading measurement (arXiv:2607.13034):
+ * comparing actual inspected-files to a task's oracle minimum.
+ */
+export function trajectoryAccumulator(): {
+  onToolEnd: (
+    call: { name: string; arguments?: Record<string, unknown> },
+    result?: { isError?: boolean },
+  ) => void;
+  totals: { toolCalls: number; files: Set<string> };
+} {
+  const totals = { toolCalls: 0, files: new Set<string>() };
+  return {
+    totals,
+    onToolEnd: (call, result) => {
+      if (result?.isError) return;
+      totals.toolCalls += 1;
+      if (FILE_TOOLS.has(call.name)) {
+        const p = call.arguments?.path;
+        if (typeof p === "string") totals.files.add(p.replace(/\\/g, "/"));
+      }
     },
   };
 }
@@ -140,6 +182,21 @@ function tokenFields(
   return { promptTokens, completionTokens, ...(costUsd !== undefined ? { costUsd } : {}) };
 }
 
+/** Build the trajectory fields (tool calls, inspected files, oracle minimum). */
+function trajectoryFields(
+  task: EvalTask,
+  run: TargetRunResult,
+): Pick<TaskResult, "toolCalls" | "inspectedFiles" | "oracleFiles" | "oracleTokens"> {
+  const out: Pick<TaskResult, "toolCalls" | "inspectedFiles" | "oracleFiles" | "oracleTokens"> = {};
+  if (run.toolCalls !== undefined) out.toolCalls = run.toolCalls;
+  if (run.inspectedFiles !== undefined) out.inspectedFiles = run.inspectedFiles;
+  if (task.oracle) {
+    out.oracleFiles = task.oracle.files;
+    if (task.oracle.tokens !== undefined) out.oracleTokens = task.oracle.tokens;
+  }
+  return out;
+}
+
 /** A scissor (in-process) target for a given provider. */
 export function scissorTarget(
   provider: ProviderId | undefined,
@@ -154,11 +211,19 @@ export function scissorTarget(
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       const base = session.tracer ? tracingQuietCallbacks(session.tracer) : QUIET_CALLBACKS;
       const usage = usageAccumulator();
+      const traj = trajectoryAccumulator();
       const callbacks = {
         ...base,
         onUsage: (u: { promptTokens?: number; completionTokens?: number; totalTokens?: number }) => {
           usage.onUsage(u);
           (base as { onUsage?: (u: unknown) => void }).onUsage?.(u);
+        },
+        onToolEnd: (
+          call: { id: string; name: string; arguments?: Record<string, unknown> },
+          result: { isError?: boolean; content?: string },
+        ) => {
+          traj.onToolEnd(call, result);
+          (base as { onToolEnd?: (c: unknown, r: unknown) => void }).onToolEnd?.(call, result);
         },
       };
       try {
@@ -171,6 +236,8 @@ export function scissorTarget(
           detail: res.aborted ? "timed out" : undefined,
           promptTokens: usage.totals.promptTokens,
           completionTokens: usage.totals.completionTokens,
+          toolCalls: traj.totals.toolCalls,
+          inspectedFiles: traj.totals.files.size,
         };
       } finally {
         clearTimeout(timer);
@@ -200,6 +267,7 @@ async function runOneTask(
     const run = await target.runTask(task, dir, timeoutMs);
     model = run.model ?? "";
     const cost = tokenFields(model, run);
+    const traj = trajectoryFields(task, run);
     if (!run.ok) {
       return {
         model,
@@ -211,6 +279,7 @@ async function runOneTask(
           elapsedMs: Date.now() - started,
           timedOut: run.detail === "timed out",
           ...cost,
+          ...traj,
         },
       };
     }
@@ -225,6 +294,7 @@ async function runOneTask(
         elapsedMs: Date.now() - started,
         timedOut: false,
         ...cost,
+        ...traj,
       },
     };
   } catch (err) {

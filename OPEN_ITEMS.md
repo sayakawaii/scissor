@@ -376,6 +376,58 @@ pass rate + tokens/task + est. cost/task; repeat N times for stochasticity.
   `--agent custom --agent-cmd` adapter for a third reference point (their token
   cost isn't in-process, so cost there is out of scope unless the CLI reports it).
 
+## 7e. Execution-scope estimation / over-reading (E3, arXiv:2607.13034)
+
+Yin & Feng, *"Do AI Agents Know When a Task Is Simple? Toward Complexity-Aware
+Reasoning and Execution"* (arXiv:2607.13034v1; code `github.com/eejyin/…`) —
+**verified real.** Proposes **E3 (Estimate, Execute, Expand)**: estimate an
+initial operating point `x₀=(difficulty, scope, risk, confidence)`, execute the
+minimum viable path, expand scope only when verification fails. Formalizes
+**ACRR** (Agent Cognitive Redundancy Ratio = (C_act − C_min)/C_min).
+
+Honest read of the evidence: the headline (−85% cost / −91% tokens / −92% files
+at 100% success) is on **MSE-Bench, a synthetic capability-controlled simulator**
+(no LLM invoked; MCF is a deliberate worst-case baseline). The real-model harness
+(**LLM-Case**, gpt-4o on real `toml`, 3 runs/task) shows the effect is *"milder
+but real"*: a frontier model doesn't grossly over-read (1–4 files), E3 is the
+leanest/fastest overall (~18% fewer tokens vs a "thorough" agent, ~4% vs ReAct,
+roughly cost-neutral on trivial edits), and its main value is **not spending
+itself into failure as hidden coupling grows**. So: directionally sound, modest
+real gains → **measure before building.**
+
+- [x] **Phase 0 — measure scissor's current over-reading.** The eval harness now
+  records, per task, the distinct files pulled into context (`inspectedFiles`)
+  and tool calls (`toolCalls`), for both the scissor and bare targets (via an
+  `onToolEnd` trajectory accumulator). `EvalTask.oracle = { files, tokens? }`
+  annotates the minimum-sufficient scope; the real tasks (`iop-*`, `go-*`,
+  `buried-bug-fix`, `deep-median-bug`, `omci-uint40-decode-bug`) are annotated
+  with `files: 1` (their answer/fix lives in one file). `compareRuns` sums these
+  into per-arm `ArmReading`; `acrrFiles` computes the files-axis ACRR; `scissor
+  ab` prints **files/task + over-read (ACRR files)** and `scissor ablate` adds a
+  **files/task column + ACRR** to the matrix. This answers "does scissor over-read
+  enough to be worth an estimator?" before any behavior change.
+  (`eval/{runner,compare}.ts`, `commands/ablate.ts`; deterministic
+  `scripts/test-acrr.mts`.) Live numbers pending a reachable provider (same block
+  as §7d A/B/C).
+- [ ] **Phase 1 — Estimate.** A transparent lexical-plus-one-probe scope
+  estimator → `x₀`, as a pre-turn guardrail in `core`, flag `SCISSOR_ESTIMATE`
+  (off by default). Deterministic test over localized vs broad-scope wording.
+- [ ] **Phase 2 — Execute minimum viable path.** Drive the existing
+  `SCISSOR_NO_REPOMAP`/`SCISSOR_NO_RETRIEVE` gates *from* `x₀`: low-difficulty
+  localized edits skip repo-map/heavy retrieval; higher scope enables dependency
+  tracing. Guardrail-based, reversible.
+- [ ] **Phase 3 — Expand.** On verify failure / low confidence, bump a bounded
+  scope level (reuse prior search hits, don't restart) and replan. The paper's
+  ablation shows Expand is the safety net (removing it drops success to 85%), so
+  it's required if Phases 1–2 ship.
+- [ ] **Phase 4 (optional) — learned estimator.** Feed the experience layer's
+  per-state option stats into the estimator so difficulty is learned from real
+  traces (ties into the OaK advisor).
+
+Bar for each phase: no pass-rate regression + a *measurable* tokens/files drop
+(via `ab`/`ablate`), plus a new eval/bench case. Because real gains are modest,
+Phase 0's measurement gates whether Phases 1+ are worth building.
+
 ## 7c. Test-first (TDD) mode
 
 - [x] Opt-in hard gate (`--tdd` / config `tddMode`): the agent must create/edit a

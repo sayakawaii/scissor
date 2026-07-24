@@ -244,6 +244,7 @@ export const BENCH_TASKS: EvalTask[] = [
     title: "Find and fix a bug buried in a larger project tree",
     tags: ["retrieve", "read", "edit", "debug", "multi-file", "real"],
     timeoutMs: 240_000,
+    oracle: { files: 1 },
     async setup(dir) {
       // Noise modules across several directories so the tree looks real and the
       // target isn't the only file.
@@ -327,6 +328,7 @@ export const BENCH_TASKS: EvalTask[] = [
     title: "Fix a subtle even-length median bug in a large tree",
     tags: ["retrieve", "read", "edit", "debug", "multi-file", "reason", "real"],
     timeoutMs: 300_000,
+    oracle: { files: 1 },
     async setup(dir) {
       const areas = ["core", "services", "utils", "models", "handlers", "adapters"];
       for (const area of areas) {
@@ -429,6 +431,7 @@ export const BENCH_TASKS: EvalTask[] = [
     title: "Fix a subtle big-endian 40-bit decode bug in a real-flavoured tree",
     tags: ["retrieve", "read", "edit", "debug", "multi-file", "reason", "real"],
     timeoutMs: 300_000,
+    oracle: { files: 1 },
     async setup(dir) {
       // Noise mirroring the real backend layout, so *locating* the decoder matters.
       const areas = [

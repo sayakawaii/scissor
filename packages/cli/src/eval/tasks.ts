@@ -16,6 +16,12 @@ export interface EvalTask {
   /** Score the result. `finalText` is the agent's last message. */
   check: (dir: string, finalText: string) => Promise<EvalCheckResult>;
   timeoutMs?: number;
+  /**
+   * Oracle minimum-sufficient scope for this task (arXiv:2607.13034): the fewest
+   * distinct files a correct solution must inspect/edit, and optionally a token
+   * floor. Used to compute an ACRR-style over-reading ratio in ab/ablate reports.
+   */
+  oracle?: { files: number; tokens?: number };
 }
 
 export const EVAL_TASKS: EvalTask[] = [

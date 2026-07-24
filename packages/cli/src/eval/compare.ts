@@ -31,6 +31,26 @@ export interface ArmCost {
   tokensKnown: boolean;
 }
 
+/**
+ * Trajectory-shape totals for one arm: inspected files + tool calls actually
+ * used, and the oracle minimum for the same tasks. Feeds an ACRR-style
+ * over-reading measure (arXiv:2607.13034) — how much context the arm pulled in
+ * beyond the minimum a correct solution needs.
+ */
+export interface ArmReading {
+  /** Sum of distinct files inspected, over tasks that reported it. */
+  files: number;
+  /** Sum of oracle minimum files, over tasks that carry an oracle. */
+  oracleFiles: number;
+  /** Sum of tool calls, over tasks that reported it. */
+  toolCalls: number;
+  filesKnown: boolean;
+  oracleKnown: boolean;
+  toolCallsKnown: boolean;
+  /** Tasks counted toward these sums (matched tasks). */
+  n: number;
+}
+
 export interface AbComparison {
   baselinePassed: number;
   baselineTotal: number;
@@ -46,6 +66,9 @@ export interface AbComparison {
   /** Token/cost totals over matched tasks (Databricks-style cost-per-task view). */
   baselineCost: ArmCost;
   candidateCost: ArmCost;
+  /** Inspected-files / oracle totals over matched tasks (ACRR over-reading view). */
+  baselineReading: ArmReading;
+  candidateReading: ArmReading;
   /** Tasks compared (present in both arms). */
   compared: number;
   /** Task keys present in only one arm (skipped from the comparison). */
@@ -98,6 +121,8 @@ export function compareRuns(baseline: ProviderRun[], candidate: ProviderRun[]): 
   let turnsAfter = 0;
   const baselineCost = emptyCost();
   const candidateCost = emptyCost();
+  const baselineReading = emptyReading();
+  const candidateReading = emptyReading();
 
   const allKeys = new Set<string>([...base.keys(), ...cand.keys()]);
   const sorted = [...allKeys].sort();
@@ -116,6 +141,8 @@ export function compareRuns(baseline: ProviderRun[], candidate: ProviderRun[]): 
     turnsAfter += c.r.turns;
     accrueCost(baselineCost, b.r);
     accrueCost(candidateCost, c.r);
+    accrueReading(baselineReading, b.r);
+    accrueReading(candidateReading, c.r);
     changes.push({
       provider: b.provider,
       taskId: b.r.taskId,
@@ -141,6 +168,8 @@ export function compareRuns(baseline: ProviderRun[], candidate: ProviderRun[]): 
     turnsAfter,
     baselineCost,
     candidateCost,
+    baselineReading,
+    candidateReading,
     compared,
     unmatched,
   };
@@ -160,6 +189,45 @@ function accrueCost(acc: ArmCost, r: TaskResult): void {
   else acc.costKnown = false;
 }
 
+function emptyReading(): ArmReading {
+  return {
+    files: 0,
+    oracleFiles: 0,
+    toolCalls: 0,
+    filesKnown: false,
+    oracleKnown: false,
+    toolCallsKnown: false,
+    n: 0,
+  };
+}
+
+function accrueReading(acc: ArmReading, r: TaskResult): void {
+  acc.n += 1;
+  if (r.inspectedFiles !== undefined) {
+    acc.files += r.inspectedFiles;
+    acc.filesKnown = true;
+  }
+  if (r.toolCalls !== undefined) {
+    acc.toolCalls += r.toolCalls;
+    acc.toolCallsKnown = true;
+  }
+  if (r.oracleFiles !== undefined) {
+    acc.oracleFiles += r.oracleFiles;
+    acc.oracleKnown = true;
+  }
+}
+
+/**
+ * Agent Cognitive Redundancy Ratio on the inspected-files axis (arXiv:2607.13034):
+ * (files_actual − files_min) / files_min, summed over the arm's oracle-annotated
+ * tasks. 0 ≈ oracle-lean; 1 ≈ read twice the minimum; higher ≈ more over-reading.
+ * Undefined when files or the oracle minimum weren't measured.
+ */
+export function acrrFiles(reading: ArmReading): number | undefined {
+  if (!reading.filesKnown || !reading.oracleKnown || reading.oracleFiles <= 0) return undefined;
+  return (reading.files - reading.oracleFiles) / reading.oracleFiles;
+}
+
 /** One row of an ablation matrix: the effect of disabling a single component. */
 export interface AblationRow {
   /** Human name of the disabled component, e.g. "repo-map". */
@@ -174,6 +242,11 @@ export interface AblationRow {
   armTokensPerTask?: number;
   refCostPerTask?: number;
   armCostPerTask?: number;
+  refFilesPerTask?: number;
+  armFilesPerTask?: number;
+  /** ACRR (files axis) with the component ON / OFF, when tasks carry an oracle. */
+  refAcrr?: number;
+  armAcrr?: number;
 }
 
 export interface AblationArm {
@@ -193,6 +266,8 @@ export function buildAblation(reference: ProviderRun[], arms: AblationArm[]): Ab
     const refTok = cmp.baselineCost.tokensKnown ? Math.round(cmp.baselineCost.tokens / n) : undefined;
     const armTok = cmp.candidateCost.tokensKnown ? Math.round(cmp.candidateCost.tokens / n) : undefined;
     const priced = cmp.baselineCost.costKnown && cmp.candidateCost.costKnown && cmp.compared > 0;
+    const refFiles = cmp.baselineReading.filesKnown ? cmp.baselineReading.files / n : undefined;
+    const armFiles = cmp.candidateReading.filesKnown ? cmp.candidateReading.files / n : undefined;
     return {
       component: arm.component,
       refPass: cmp.baselinePassed,
@@ -203,6 +278,10 @@ export function buildAblation(reference: ProviderRun[], arms: AblationArm[]): Ab
       armTokensPerTask: armTok,
       refCostPerTask: priced ? cmp.baselineCost.costUsd / n : undefined,
       armCostPerTask: priced ? cmp.candidateCost.costUsd / n : undefined,
+      refFilesPerTask: refFiles,
+      armFilesPerTask: armFiles,
+      refAcrr: acrrFiles(cmp.baselineReading),
+      armAcrr: acrrFiles(cmp.candidateReading),
     };
   });
 }
@@ -259,6 +338,22 @@ export function formatComparison(
     lines.push(dim("  est. cost/task: n/a (model has no price entry)"));
   }
 
+  // Over-reading view (arXiv:2607.13034): files/task and, when tasks carry an
+  // oracle minimum, the ACRR redundancy ratio for each arm.
+  if (cmp.baselineReading.filesKnown && cmp.candidateReading.filesKnown) {
+    const fb = cmp.baselineReading.files / n;
+    const fc = cmp.candidateReading.files / n;
+    lines.push(`  files/task: ${a} ${fb.toFixed(1)}  \u2192  ${b} ${fc.toFixed(1)}   ${dim(ratio(fb, fc))}`);
+    const ab = acrrFiles(cmp.baselineReading);
+    const ac = acrrFiles(cmp.candidateReading);
+    if (ab !== undefined && ac !== undefined) {
+      const minPerTask = cmp.baselineReading.oracleFiles / n;
+      lines.push(
+        `  over-read (ACRR files): ${a} ${ab.toFixed(2)}  \u2192  ${b} ${ac.toFixed(2)}   ${dim(`min ${minPerTask.toFixed(1)} file/task`)}`,
+      );
+    }
+  }
+
   for (const t of cmp.fixed) {
     lines.push(`  ${ok("fixed")}  ${t.provider}/${t.taskId} ${dim(`(${t.turnsBefore}t\u2192${t.turnsAfter}t)`)}`);
   }
@@ -284,7 +379,14 @@ export function formatComparison(
  * with a zero pass delta means the component spent tokens for no measured gain.
  */
 export function formatAblation(
-  reference: { pass: number; total: number; tokensPerTask?: number; costPerTask?: number },
+  reference: {
+    pass: number;
+    total: number;
+    tokensPerTask?: number;
+    costPerTask?: number;
+    filesPerTask?: number;
+    acrr?: number;
+  },
   rows: AblationRow[],
   c: CompareColors = {},
 ): string {
@@ -297,12 +399,22 @@ export function formatAblation(
 
   const refCost = reference.costPerTask !== undefined ? usd(reference.costPerTask) : "n/a";
   const refTok = reference.tokensPerTask !== undefined ? String(reference.tokensPerTask) : "n/a";
+  const refFiles = reference.filesPerTask !== undefined ? reference.filesPerTask.toFixed(1) : "n/a";
+  const refAcrr = reference.acrr !== undefined ? ` · ACRR ${reference.acrr.toFixed(2)}` : "";
   lines.push(
-    dim(`  reference (full): ${reference.pass}/${reference.total} pass · ${refTok} tok/task · ${refCost}/task`),
+    dim(
+      `  reference (full): ${reference.pass}/${reference.total} pass · ${refTok} tok/task · ${refCost}/task · ${refFiles} files/task${refAcrr}`,
+    ),
   );
   lines.push("");
   lines.push(
-    dim("  component off".padEnd(22) + "pass".padEnd(12) + "tok/task".padEnd(16) + "cost/task"),
+    dim(
+      "  component off".padEnd(22) +
+        "pass".padEnd(12) +
+        "tok/task".padEnd(16) +
+        "files/task".padEnd(14) +
+        "cost/task",
+    ),
   );
 
   for (const r of rows) {
@@ -315,6 +427,10 @@ export function formatAblation(
       r.refTokensPerTask !== undefined && r.armTokensPerTask !== undefined
         ? `${r.refTokensPerTask}\u2192${r.armTokensPerTask}`
         : "n/a";
+    const files =
+      r.refFilesPerTask !== undefined && r.armFilesPerTask !== undefined
+        ? `${r.refFilesPerTask.toFixed(1)}\u2192${r.armFilesPerTask.toFixed(1)}`
+        : "n/a";
     const cost =
       r.refCostPerTask !== undefined && r.armCostPerTask !== undefined
         ? `${usd(r.refCostPerTask)}\u2192${usd(r.armCostPerTask)}`
@@ -324,12 +440,16 @@ export function formatAblation(
         r.component.padEnd(20) +
         (passCol + delta).padEnd(20) +
         tok.padEnd(16) +
+        files.padEnd(14) +
         cost,
     );
   }
   lines.push("");
   lines.push(
     dim("  pass col: value with component OFF; (\u2212n) it earned its keep, (+n) it hurt, (=) no change"),
+  );
+  lines.push(
+    dim("  files/task + ACRR: over-reading vs oracle minimum (arXiv:2607.13034); lower is leaner"),
   );
   return lines.join("\n");
 }
