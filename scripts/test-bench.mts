@@ -230,5 +230,49 @@ async function helper(name: string, body: string): Promise<string> {
   await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
 }
 
+// --- omci-uint40-decode-bug (Scheme D, real-code grounded): the off-by-8 shift
+// on the 40-bit path fails as-scaffolded, the correct 2**32 fix passes, and a
+// hardcoded lookup is rejected (probe-scored, independent of check.js) ---
+{
+  const t = task("omci-uint40-decode-bug");
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "scissor-uint40-"));
+  await t.setup!(dir);
+  const utilPath = path.join(dir, "src/service/omcianalyzer/omciSchema/util.js");
+
+  const before = await t.check(dir, "");
+  assert.equal(before.pass, false, "omci-uint40 fails before the fix");
+
+  const correctUint40 =
+    "function uint40(b) {\n" +
+    "  return b[0] * 2 ** 32 + b[1] * 2 ** 24 + b[2] * 2 ** 16 + b[3] * 2 ** 8 + b[4];\n" +
+    "}\n";
+  const rest =
+    "function uint64be(b) {\n  let v = 0;\n  for (let i = 0; i < 8; i++) v = v * 256 + b[i];\n  return v;\n}\n" +
+    "function bytesUInteger(bytes, size) {\n" +
+    "  if (size === 1) return bytes[0];\n" +
+    "  if (size === 2) return bytes[0] * 256 + bytes[1];\n" +
+    "  if (size === 4) return bytes[0] * 2 ** 24 + bytes[1] * 2 ** 16 + bytes[2] * 2 ** 8 + bytes[3];\n" +
+    "  if (size === 5) return uint40(bytes);\n" +
+    "  return uint64be(bytes);\n}\n" +
+    "module.exports = { bytesUInteger, uint40 };\n";
+
+  await fs.writeFile(utilPath, correctUint40 + rest, "utf8");
+  const after = await t.check(dir, "");
+  assert.equal(after.pass, true, "omci-uint40 passes after the correct fix");
+
+  // A hardcoded lookup that ignores the input bytes must NOT pass the guard.
+  await fs.writeFile(
+    utilPath,
+    "function uint40(b) {\n  const m = { '1,0,0,0,0': 4294967296, '255,255,255,255,255': 1099511627775 };\n" +
+      "  return m[String(b)] || 0;\n}\n" +
+      rest,
+    "utf8",
+  );
+  const hardcoded = await t.check(dir, "");
+  assert.equal(hardcoded.pass, false, "hardcoded lookup is rejected");
+
+  await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+}
+
 await fs.rm(helperDir, { recursive: true, force: true }).catch(() => {});
 process.stdout.write("\x1b[32mtest-bench: ALL PASS\x1b[0m\n");

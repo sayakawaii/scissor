@@ -297,6 +297,73 @@ pass rate + tokens/task + est. cost/task; repeat N times for stochasticity.
     `deep-median-bug`: a ~50-file tree with a *subtle* even-length median bug
     (odd-length inputs pass, so it needs edge-case reasoning, not just grep),
     probe-scored so editing `check.js` can't pass it.
+  - [x] **Scheme D — real-code-grounded task**: `omci-uint40-decode-bug`, ported
+    from the iop-toolkit backend's `service/omcianalyzer/omciSchema/util.go`. There
+    most widths use `binary.BigEndian`, but the 40-bit path (`Uint40`) is
+    hand-rolled with explicit shifts; here the 5-byte decoder scales the MSB by
+    2**32→2**24, so it's only wrong once the value ≥ 2**32 (small inputs and all
+    other widths pass). Buried in an omci-flavoured tree with correct look-alike
+    decoders as red herrings; probe-scored (b[0] spans 0→full 2**40-1) with a
+    hardcode guard, so it needs range reasoning + retrieval, not grep. Hermetic
+    (Node), so it's in the gated `BENCH_TASKS`. (`bench-tasks.ts`; deterministic
+    coverage in `scripts/test-bench.mts`.)
+  - [x] **Scheme A — real-codebase retrieval QA (`iop-toolkit` backend).** A set
+    of read-only QA tasks over a real ~190-file Go service (nested `service/`
+    packages). Each asks a question whose answer is a precise token living in one
+    non-obvious file (module name, Kafka client, a route's handler, a route-group
+    prefix, config topic keys, the EVTOCD-deshape file), so answering rewards
+    repo-map/retrieve while a near-naked harness must blind-read/grep. Zero
+    toolchain (no build/test), scored by case-insensitive all-of token match.
+    Source is a cached tree (env `SCISSOR_IOP_BACKEND`, default
+    `~/.scissor/iop-cache/backend`); tasks are reachable only by id via
+    `resolveTasks` so they never enter the hermetic default suite. Run:
+    `scissor ab --candidate bare -t iop-module-name,iop-library-search-handler,…
+    --runs 3`. (`packages/cli/src/eval/iop-tasks.ts`; deterministic
+    `scripts/test-iop.mts`.)
+    - [ ] **Live signal still pending — provider unreachable here.** Infra +
+      deterministic test are green, but the bare-vs-scissor run needs an LLM.
+      The corporate proxy 403-blocks `api.deepseek.com` (the only keyed provider)
+      and Node bypasses the proxy (direct → ETIMEDOUT); anthropic/github are
+      allowed. Re-run when a reachable+keyed provider is available (or add
+      proxy-aware fetch + an anthropic key).
+  - [x] **Scheme B — real `go test` bug-fix (`go-uint40-decode-bug`).** A
+    self-contained, stdlib-only Go module with the same 40-bit decode bug ported
+    from `omciSchema/util.go`, scored by an actual `go test` red→green (via an
+    independent probe test, so editing the on-disk test can't cheat) plus a
+    hardcode guard. Exercises the real cross-language path, not a JS stand-in.
+    A WSL bridge runs `go` against the workspace `/mnt/<drive>` mount, offline
+    (`GOPROXY=off`; `SCISSOR_GO_BIN` overrides the toolchain dir). Reachable only
+    by id (needs Go), never in the hermetic gate. Validated end-to-end offline:
+    buggy fails / correct `<<32` fix passes / hardcoded lookup rejected.
+    (`packages/cli/src/eval/{go-helpers,go-tasks}.ts`; deterministic
+    `scripts/test-go-tasks.mts` covers the pure bridge + setup without needing Go.)
+  - [x] **Scheme C — verify-loop ablation on the Go task.** `go build ./...;
+    go test ./...` wired via `SCISSOR_VERIFY_COMMANDS` makes scissor's verify loop
+    meaningful on a non-Node project (it auto-detects Node only); `scissor ablate
+    -t go-uint40-decode-bug` then quantifies the closed loop's pass/token/cost
+    delta. Turns the "verify only auto-detects Node" gap into a measurable knob.
+    (Recipe in `docs/benchmarking.md`; `goVerifyCommands()` helper + test.)
+    - [ ] **Live signal (B/C) pending the LLM provider** (same block as A): the
+      task/check are validated offline, but the bare-vs-scissor and verify-on/off
+      *agent* runs need a reachable provider (DeepSeek is proxy-blocked here).
+  - [x] **First distilled real historical bug (`omci-attr-slice-panic`).** Mined
+    from the backend history and distilled from `omcianalyzer` commit `d5f27be`
+    *"fix(omciSchema): clamp table attribute slice to payload length"*: pre-fix
+    code sliced a schema attribute to its declared size without clamping to the
+    received payload → slice-out-of-range panic on short payloads (proprietary MEs
+    only in the default schema). Packaged self-contained (stdlib-only Go) so a
+    real `go test` goes red→green; independent probe (fitting + overrunning
+    schemas) + stub guard; same WSL/offline bridge as Scheme B. Validated offline:
+    buggy panics / correct payload-length clamp passes / stubbed result rejected.
+    (`go-tasks.ts`; deterministic coverage in `scripts/test-go-tasks.mts`.)
+  - [ ] **Automate the distillation (`eval-gen --from-commit`).** Today `eval-gen`
+    only drafts from a scissor trace; extend it to take a fix commit (message +
+    changed files + pre-fix contents) and scaffold a red→green draft, so real bugs
+    become tasks without hand-authoring. Mining tips: per-service repos carry full
+    history — `omcianalyzer` (backend, 227 commits, richest), `webioptoolkit`
+    (frontend), `collector`; prefer single-file logic fixes with a clear symptom
+    in the message (`git log --grep=fix`). Good next candidates seen while mining:
+    `e7c8f76` (PriorityQueue port parser), `20838cf` (Nokia ONU TX length < 120).
   - [ ] Curate reviewed tasks on scissor's own repo / a chosen OSS repo with
     trustworthy checks (the high-fidelity, high-effort end).
 - [x] Run each arm N times and report mean ± spread (LLM runs are stochastic;

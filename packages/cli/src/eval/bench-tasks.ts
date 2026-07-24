@@ -1,4 +1,6 @@
 import { exists, read, runNode, write } from "./task-helpers.js";
+import { IOP_TASKS } from "./iop-tasks.js";
+import { GO_TASKS } from "./go-tasks.js";
 import { EVAL_TASKS, type EvalTask } from "./tasks.js";
 
 // Bench tasks allow a slightly longer per-run budget than the quick eval suite.
@@ -411,6 +413,147 @@ export const BENCH_TASKS: EvalTask[] = [
         : { pass: false, detail: `probe output: ${JSON.stringify(r.out.slice(0, 80))}` };
     },
   },
+  {
+    // Option D, grounded in REAL code (Scheme D): ported from the iop-toolkit
+    // backend's `service/omcianalyzer/omciSchema/util.go`. There, most widths
+    // decode via `binary.BigEndian`, but the 40-bit path (`Uint40`) is
+    // hand-rolled with explicit shifts — exactly the kind of code that invites an
+    // off-by-8. Here the 5-byte decoder scales the most-significant byte by 2**24
+    // instead of 2**32, so it's only wrong once b[0] != 0 (value >= 2**32). All
+    // the standard widths (1/2/4/8) and small 5-byte values decode correctly, so
+    // grep/eyeball isn't enough — the fix needs range/edge reasoning. Buried in an
+    // omci-flavoured tree with correct look-alike decoders as red herrings, and
+    // probe-scored so neutering check.js can't pass it. (JS bit-shifts are 32-bit,
+    // so widths >32 use arithmetic — values stay < 2**53.)
+    id: "omci-uint40-decode-bug",
+    title: "Fix a subtle big-endian 40-bit decode bug in a real-flavoured tree",
+    tags: ["retrieve", "read", "edit", "debug", "multi-file", "reason", "real"],
+    timeoutMs: 300_000,
+    async setup(dir) {
+      // Noise mirroring the real backend layout, so *locating* the decoder matters.
+      const areas = [
+        "controller",
+        "dao",
+        "routers",
+        "models",
+        "middleware",
+        "metrics",
+        "service/omcianalyzer/omciDiagram",
+        "service/omciDeshape",
+      ];
+      for (const area of areas) {
+        for (let i = 0; i < 5; i++) {
+          const name = (area.split("/").pop() ?? area) + String(i);
+          await write(
+            dir,
+            `src/${area}/${name}.js`,
+            `// ${area} unit ${i}\nfunction ${name}(x) {\n  return x + ${i};\n}\nmodule.exports = { ${name} };\n`,
+          );
+        }
+      }
+      // Same-topic red herrings: correct decoders that look like the target.
+      await write(
+        dir,
+        "src/service/omcianalyzer/omciSchema/bigendian.js",
+        "// Correct fixed-width big-endian helpers (do not touch).\n" +
+          "function bytesUint16(b) {\n  return b[0] * 256 + b[1];\n}\n" +
+          "function bytesUint32(b) {\n  return b[0] * 2 ** 24 + b[1] * 2 ** 16 + b[2] * 2 ** 8 + b[3];\n}\n" +
+          "module.exports = { bytesUint16, bytesUint32 };\n",
+      );
+      // The buggy hand-rolled 40-bit decoder, buried a few directories deep.
+      await write(
+        dir,
+        "src/service/omcianalyzer/omciSchema/util.js",
+        [
+          "// Variable-width big-endian unsigned decode (ported from omciSchema/util.go).",
+          "function uint40(b) {",
+          "  // BUG: the most-significant byte must scale by 2**32, not 2**24.",
+          "  return b[0] * 2 ** 24 + b[1] * 2 ** 24 + b[2] * 2 ** 16 + b[3] * 2 ** 8 + b[4];",
+          "}",
+          "function uint64be(b) {",
+          "  let v = 0;",
+          "  for (let i = 0; i < 8; i++) v = v * 256 + b[i];",
+          "  return v;",
+          "}",
+          "function bytesUInteger(bytes, size) {",
+          "  if (size === 1) return bytes[0];",
+          "  if (size === 2) return bytes[0] * 256 + bytes[1];",
+          "  if (size === 4) return bytes[0] * 2 ** 24 + bytes[1] * 2 ** 16 + bytes[2] * 2 ** 8 + bytes[3];",
+          "  if (size === 5) return uint40(bytes);",
+          "  return uint64be(bytes);",
+          "}",
+          "module.exports = { bytesUInteger, uint40 };",
+          "",
+        ].join("\n"),
+      );
+      await write(
+        dir,
+        "src/service/omcianalyzer/omciSchema/index.js",
+        "const { bytesUInteger } = require('./util.js');\nmodule.exports = { bytesUInteger };\n",
+      );
+      await write(
+        dir,
+        "check.js",
+        [
+          "const { bytesUInteger } = require('./src/service/omcianalyzer/omciSchema');",
+          "const cases = [",
+          "  [[7], 1, 7],",
+          "  [[1, 0], 2, 256],",
+          "  [[0, 0, 1, 0], 4, 256],",
+          "  [[1, 0, 0, 0, 0], 5, 4294967296],",
+          "  [[255, 255, 255, 255, 255], 5, 1099511627775],",
+          "];",
+          "for (const [bytes, size, exp] of cases) {",
+          "  const got = bytesUInteger(bytes, size);",
+          "  if (got !== exp) {",
+          "    console.error(`FAIL: bytesUInteger(${JSON.stringify(bytes)}, ${size}) = ${got}, expected ${exp}`);",
+          "    process.exit(1);",
+          "  }",
+          "}",
+          "console.log('OK');",
+          "",
+        ].join("\n"),
+      );
+    },
+    prompt:
+      "Running `node check.js` fails: a big-endian byte-to-integer decoder under src/ returns the wrong value for some inputs (this project has many modules). Find the offending function and fix it so `node check.js` prints OK. The decoder reads big-endian unsigned integers of a given byte width; the 5-byte (40-bit) width is wrong for larger values. Do not edit check.js.",
+    async check(dir) {
+      // Independent probe (not the on-disk check.js): standard widths, plus
+      // 5-byte values spanning b[0]==0 (the trap) through the full 2**40-1 range.
+      const probe = [
+        "const { bytesUInteger } = require('./src/service/omcianalyzer/omciSchema');",
+        "const cases = [",
+        "  [[7], 1, 7],",
+        "  [[1, 0], 2, 256],",
+        "  [[0, 0, 1, 0], 4, 256],",
+        "  [[0, 0, 0, 0, 0, 0, 1, 0], 8, 256],",
+        "  [[0, 1, 0, 0, 0], 5, 16777216],",
+        "  [[1, 0, 0, 0, 0], 5, 4294967296],",
+        "  [[1, 2, 3, 4, 5], 5, 4328719365],",
+        "  [[255, 255, 255, 255, 255], 5, 1099511627775],",
+        "];",
+        "for (const [bytes, size, exp] of cases) {",
+        "  const got = bytesUInteger(bytes, size);",
+        "  if (got !== exp) throw new Error(`bytesUInteger(${JSON.stringify(bytes)}, ${size})=${got}, expected ${exp}`);",
+        "}",
+        "console.log('OK');",
+        "",
+      ].join("\n");
+      await write(dir, "__probe_uint40.js", probe);
+      const r = await node(dir, "__probe_uint40.js");
+      if (!r.ok) return { pass: false, detail: `decode still wrong: ${r.out.slice(0, 120)}` };
+      if (!r.out.includes("OK")) {
+        return { pass: false, detail: `probe output: ${JSON.stringify(r.out.slice(0, 80))}` };
+      }
+      // Guard: the fix must live in the decoder, not a hardcoded lookup — the
+      // function must still derive its result from the input bytes.
+      const src = await read(dir, "src/service/omcianalyzer/omciSchema/util.js");
+      if (!/b\[0\]/.test(src) || !/b\[4\]/.test(src)) {
+        return { pass: false, detail: "uint40 no longer decodes from its input bytes (likely hardcoded)" };
+      }
+      return { pass: true, detail: "40-bit big-endian decode fixed (probe passes)" };
+    },
+  },
 ];
 
 /**
@@ -422,5 +565,8 @@ export const BENCH_TASKS: EvalTask[] = [
 export function resolveTasks(ids?: string[]): EvalTask[] {
   if (!ids || ids.length === 0) return EVAL_TASKS;
   const set = new Set(ids);
-  return [...EVAL_TASKS, ...BENCH_TASKS].filter((t) => set.has(t.id));
+  // IOP_TASKS (external source tree) and GO_TASKS (Go toolchain) are only ever
+  // returned when explicitly named by id — never part of the default (hermetic)
+  // suite / pre-push gate.
+  return [...EVAL_TASKS, ...BENCH_TASKS, ...IOP_TASKS, ...GO_TASKS].filter((t) => set.has(t.id));
 }
