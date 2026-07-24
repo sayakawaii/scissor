@@ -8,7 +8,55 @@ tokens/task + est. cost/task** — repeated N times because LLM runs are stochas
 All of this needs a reachable, keyed LLM provider. If your only provider is
 DeepSeek and you're behind a proxy that blocks `api.deepseek.com` (or Node can't
 use the proxy), these commands will report `0/…` with every call erroring — run
-them from a network that can reach the provider.
+them from a network that can reach the provider, or tunnel through a VPS (below).
+
+## Reaching DeepSeek through a VPS (when the corporate proxy blocks it)
+
+Our corporate proxy `10.144.1.10:8080` 403-blocks `api.deepseek.com` but *does*
+allow `CONNECT` to a VPS we control (`64.176.54.200`), and the VPS reaches
+DeepSeek fine. So we chain: **local Node → local CONNECT proxy → SSH tunnel
+(through the corporate proxy) → VPS → DeepSeek**.
+
+Two pieces make this work:
+
+1. **A local CONNECT proxy backed by the SSH tunnel.** `~/.scissor/vps-proxy.py`
+   (Python + paramiko) opens `CONNECT 64.176.54.200:22` through the corporate
+   proxy, SSHs in with a password, and serves a local HTTP `CONNECT` proxy whose
+   exit is the VPS — one SSH transport, one `direct-tcpip` channel per request.
+   No software is installed on the VPS.
+
+   ```bash
+   # start it (password via env; never hard-code). Prints PROXY_READY when up.
+   PY="/c/Users/mingheh/AppData/Local/Programs/Python/Python311/python.exe"
+   VPS_PW='…' "$PY" ~/.scissor/vps-proxy.py proxy 8899 &
+   # sanity: a real DeepSeek call from the VPS itself
+   VPS_PW='…' "$PY" ~/.scissor/vps-proxy.py verify-deepseek
+   ```
+
+2. **Proxy-aware provider transport in scissor.** The OpenAI/Anthropic SDKs ship
+   their own HTTP transport that ignores `*_PROXY`, so they went direct and timed
+   out. scissor now hands the SDK Node's **built-in global `fetch`** (Node ≥ 24)
+   whenever `NODE_USE_ENV_PROXY=1` is set — and that global fetch honors
+   `HTTPS_PROXY`/`NO_PROXY` (`packages/core/src/providers/proxy.ts`). Zero change
+   for normal direct runs (the switch is off by default).
+
+Put together, run any scissor command through the VPS by prefixing:
+
+```bash
+NODE_USE_ENV_PROXY=1 HTTPS_PROXY=http://127.0.0.1:8899 \
+  node packages/cli/dist/index.js ab --candidate bare -t create-file
+```
+
+Notes:
+- Both env vars are required: `HTTPS_PROXY` names the local tunnel, and
+  `NODE_USE_ENV_PROXY=1` is what makes Node's global fetch (hence the provider)
+  actually use it.
+- The tunnel is a single SSH transport with many channels; the proxy keeps the
+  socket alive (`set_keepalive(30)`) and does not reap idle tunnels, so long
+  streaming completions survive.
+- SSH port 22 to the VPS is only reachable *through* the corporate proxy here
+  (direct 443/VLESS ports are blocked), which is why the helper dials the proxy's
+  `CONNECT` rather than connecting to the VPS directly.
 
 ## Quick reference (synthetic tasks, no external repo)
 

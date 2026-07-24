@@ -2,6 +2,7 @@ import { CONTROL_TOOL_NAMES } from "./tools/control.js";
 import { buildSystemPrompt, CLARIFY_GUIDANCE } from "./prompt.js";
 import { isVagueRequest } from "./intent.js";
 import { createApprovalGuard, createTddGuard } from "./guardrails.js";
+import { estimateOperatingPoint, type OperatingPoint } from "./experience/estimator.js";
 import type {
   ApprovalDecision,
   ApprovalPolicy,
@@ -51,6 +52,8 @@ export interface AgentCallbacks {
   onSubagentStart?(task: string, depth: number): void;
   /** A sub-agent finished; summary is its final message. */
   onSubagentEnd?(summary: string, depth: number): void;
+  /** E3 execution-scope estimate for a run's input (observe-only, Phase 1). */
+  onEstimate?(op: OperatingPoint): void;
 }
 
 export interface CompactionInfo {
@@ -301,6 +304,13 @@ export class Agent {
     signal?: AbortSignal,
   ): Promise<RunResult> {
     this.messages.push({ role: "user", content: userInput });
+
+    // E3 Estimate stage (observe-only, Phase 1): judge the task's execution scope
+    // up front and surface it. It does NOT yet change what context is gathered —
+    // that is Phase 2. Gated so default behavior is unchanged (OPEN_ITEMS §7e).
+    if (process.env.SCISSOR_ESTIMATE && callbacks.onEstimate) {
+      callbacks.onEstimate(estimateOperatingPoint({ query: userInput }));
+    }
 
     // Auto intent-clarification: only for this run, and only when the input
     // looks clearly vague. Appended to the system prompt via renderSystemPrompt.

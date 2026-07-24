@@ -12,6 +12,7 @@ import type {
   Tool,
   ToolCall,
 } from "../types.js";
+import { proxyFetch } from "./proxy.js";
 import { safeParseJsonObject } from "./util.js";
 
 export interface OpenAICompatibleOptions {
@@ -33,9 +34,11 @@ export class OpenAICompatibleProvider implements LLMProvider {
   constructor(opts: OpenAICompatibleOptions) {
     this.id = opts.id;
     this.model = opts.model;
+    const fetchImpl = proxyFetch();
     this.client = new OpenAI({
       apiKey: opts.apiKey,
       baseURL: opts.baseURL,
+      ...(fetchImpl ? { fetch: fetchImpl } : {}),
     });
   }
 

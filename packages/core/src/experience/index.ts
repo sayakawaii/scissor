@@ -12,3 +12,4 @@ export * from "./report.js";
 export * from "./advisor.js";
 export * from "./router.js";
 export * from "./curator.js";
+export * from "./estimator.js";

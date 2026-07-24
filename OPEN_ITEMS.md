@@ -320,12 +320,13 @@ pass rate + tokens/task + est. cost/task; repeat N times for stochasticity.
     `scissor ab --candidate bare -t iop-module-name,iop-library-search-handler,…
     --runs 3`. (`packages/cli/src/eval/iop-tasks.ts`; deterministic
     `scripts/test-iop.mts`.)
-    - [ ] **Live signal still pending — provider unreachable here.** Infra +
-      deterministic test are green, but the bare-vs-scissor run needs an LLM.
-      The corporate proxy 403-blocks `api.deepseek.com` (the only keyed provider)
-      and Node bypasses the proxy (direct → ETIMEDOUT); anthropic/github are
-      allowed. Re-run when a reachable+keyed provider is available (or add
-      proxy-aware fetch + an anthropic key).
+    - [x] **Live signal obtained via a VPS tunnel.** The corporate proxy
+      403-blocks `api.deepseek.com`, but it allows `CONNECT` to a VPS that reaches
+      DeepSeek. scissor is now proxy-aware (`NODE_USE_ENV_PROXY=1` → provider uses
+      Node's global fetch; `providers/proxy.ts`), and a local SSH-tunnel CONNECT
+      proxy (`~/.scissor/vps-proxy.py`) bridges to the VPS. All 8 IOP tasks ran
+      8/8 on both arms; see the §7e table + `docs/benchmarking.md` "Reaching
+      DeepSeek through a VPS".
   - [x] **Scheme B — real `go test` bug-fix (`go-uint40-decode-bug`).** A
     self-contained, stdlib-only Go module with the same 40-bit decode bug ported
     from `omciSchema/util.go`, scored by an actual `go test` red→green (via an
@@ -343,9 +344,10 @@ pass rate + tokens/task + est. cost/task; repeat N times for stochasticity.
     -t go-uint40-decode-bug` then quantifies the closed loop's pass/token/cost
     delta. Turns the "verify only auto-detects Node" gap into a measurable knob.
     (Recipe in `docs/benchmarking.md`; `goVerifyCommands()` helper + test.)
-    - [ ] **Live signal (B/C) pending the LLM provider** (same block as A): the
-      task/check are validated offline, but the bare-vs-scissor and verify-on/off
-      *agent* runs need a reachable provider (DeepSeek is proxy-blocked here).
+    - [x] **Live signal (B) obtained** via the VPS tunnel: `go-uint40-decode-bug`
+      ran 1/1 on both arms through the real WSL `go test` bridge (turns 8→5,
+      tokens 17.0k→23.8k, files 2.0 both; §7e table). Scheme C verify-loop
+      ablation still wants a dedicated run.
   - [x] **First distilled real historical bug (`omci-attr-slice-panic`).** Mined
     from the backend history and distilled from `omcianalyzer` commit `d5f27be`
     *"fix(omciSchema): clamp table attribute slice to payload length"*: pre-fix
@@ -407,11 +409,44 @@ real gains → **measure before building.**
   **files/task column + ACRR** to the matrix. This answers "does scissor over-read
   enough to be worth an estimator?" before any behavior change.
   (`eval/{runner,compare}.ts`, `commands/ablate.ts`; deterministic
-  `scripts/test-acrr.mts`.) Live numbers pending a reachable provider (same block
-  as §7d A/B/C).
-- [ ] **Phase 1 — Estimate.** A transparent lexical-plus-one-probe scope
-  estimator → `x₀`, as a pre-turn guardrail in `core`, flag `SCISSOR_ESTIMATE`
-  (off by default). Deterministic test over localized vs broad-scope wording.
+  `scripts/test-acrr.mts`.)
+  - [x] **Live signal obtained** (via the VPS tunnel, deepseek-chat, router off,
+    bare vs scissor). Pass rate was identical on every set (the model is capable
+    enough that scaffolding didn't change success); the cost picture:
+
+    | task set | turns b→s | tokens/task b→s | files/task b→s | ACRR b→s |
+    |---|---|---|---|---|
+    | eval (create-file, edit-json) | 5→6 | 2.7k→10.1k (3.8×) | 1.0→1.0 | (no oracle) |
+    | IOP QA ×8 (retrieval) | 42→19 | 11.8k→13.3k (1.12×) | 1.0→0.8 | 0.00→−0.25 |
+    | omci-uint40 (buried bug) | 7→5 | 13.1k→25.2k (1.93×) | 3.0→4.0 | 2.00→3.00 |
+    | go-uint40 (real `go test`) | 8→5 | 17.0k→23.8k (1.40×) | 2.0→2.0 | 1.00→1.00 |
+
+    Reading: scissor consistently uses **fewer turns** (repo-map/retrieve
+    front-loads context) but **more tokens** (1.1–3.8×) — the scaffolding's
+    context has a token cost. Over-reading is **modest and task-dependent**:
+    leaner on retrieval QA, but *more* over-reading than bare on the buried bug.
+    This matches the paper's "milder but real" on a capable model, and it locates
+    the E3 lever precisely — **skip repo-map/retrieval on localized tasks to cut
+    the token overhead without losing pass rate.**
+  - [ ] **Metric caveat — `retrieve` under-counts.** `inspectedFiles` counts only
+    `read_file`/`edit_file`/`write_file` paths, but scissor's `retrieve` pulls
+    file content without a `read_file` call (hence the −0.25 ACRR on IOP: scissor
+    answered from retrieve snippets, "reading" <1 file by this proxy). The **token
+    axis is the honest over-reading measure for scissor**; to fix the files axis,
+    count distinct files surfaced by `retrieve` (and optionally set `oracleTokens`
+    for a token-axis ACRR).
+- [x] **Phase 1 — Estimate (observe-only).** A transparent lexical-plus-one-probe
+  scope estimator → `x₀ = (difficulty, scope, risk, confidence, rationale)`:
+  `estimateOperatingPoint()` in `experience/estimator.ts`. Localized single-file
+  edits read as difficulty 1/local; broad-scope wording ("across the codebase",
+  "every call site", "refactor") as 3/repo; weak cues default to a cautious
+  2/cross-file; an optional probe hit-count lowers confidence when the footprint
+  is wider than the wording implies (an Expand candidate) without changing the
+  optimistic estimate. Wired observe-only: `Agent.run` computes it from the
+  request when `SCISSOR_ESTIMATE=1` and fires `onEstimate`; the CLI records an
+  `estimate` trace event (secret-free). No behavior change yet. Deterministic
+  `scripts/test-estimator.mts`; verified live (a localized prompt recorded
+  `difficulty:1, scope:local, confidence:0.8`).
 - [ ] **Phase 2 — Execute minimum viable path.** Drive the existing
   `SCISSOR_NO_REPOMAP`/`SCISSOR_NO_RETRIEVE` gates *from* `x₀`: low-difficulty
   localized edits skip repo-map/heavy retrieval; higher scope enables dependency

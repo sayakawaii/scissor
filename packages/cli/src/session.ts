@@ -634,6 +634,24 @@ export function makeCallbacks(renderer: TurnRenderer, tracer?: Tracer, opts: Cal
       renderer.onSubagentEnd(summary, depth);
       tracer?.record("subagent", { phase: "end", depth });
     },
+    // E3 Estimate (observe-only, Phase 1): record the up-front scope estimate so
+    // it can be correlated with outcomes later. Low-cardinality + secret-free
+    // (no user content; rationale strings are generic cue labels).
+    onEstimate: (op: {
+      difficulty: number;
+      scope: string;
+      risk: string;
+      confidence: number;
+      rationale: string[];
+    }) => {
+      tracer?.record("estimate", {
+        difficulty: op.difficulty,
+        scope: op.scope,
+        risk: op.risk,
+        confidence: op.confidence,
+        rationale: op.rationale,
+      });
+    },
   };
 }
 

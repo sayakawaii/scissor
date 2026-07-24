@@ -12,6 +12,7 @@ import type {
   Tool,
   ToolCall,
 } from "../types.js";
+import { proxyFetch } from "./proxy.js";
 import { safeParseJsonObject } from "./util.js";
 
 export interface AnthropicOptions {
@@ -31,7 +32,12 @@ export class AnthropicProvider implements LLMProvider {
   constructor(opts: AnthropicOptions) {
     this.model = opts.model;
     this.maxTokens = opts.maxTokens ?? 4096;
-    this.client = new Anthropic({ apiKey: opts.apiKey, baseURL: opts.baseURL });
+    const fetchImpl = proxyFetch();
+    this.client = new Anthropic({
+      apiKey: opts.apiKey,
+      baseURL: opts.baseURL,
+      ...(fetchImpl ? { fetch: fetchImpl } : {}),
+    });
   }
 
   async chat(params: ChatParams): Promise<ChatResult> {
