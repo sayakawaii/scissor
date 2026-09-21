@@ -1,0 +1,32 @@
+#!/bin/sh
+# scissor pre-push gate.
+#
+# Enforces the full verification pipeline on every `git push` so quality checks
+# never depend on someone remembering to run them:
+#   typecheck -> build -> deterministic tests -> eval suite (real-LLM, --strict)
+#
+# The eval suite needs a configured provider key (see `scissor config`).
+# Emergency bypass (still runs typecheck/build/tests):
+#   SCISSOR_SKIP_EVAL=1 git push
+# Full bypass (discouraged):
+#   git push --no-verify
+
+set -e
+
+echo "[pre-push] typecheck..."
+npm run --silent typecheck
+
+echo "[pre-push] build..."
+npm run --silent build
+
+echo "[pre-push] tests..."
+npm run --silent test
+
+if [ "$SCISSOR_SKIP_EVAL" = "1" ]; then
+  echo "[pre-push] SCISSOR_SKIP_EVAL=1 set - skipping eval suite (checks above still ran)."
+else
+  echo "[pre-push] eval suite (npm run eval -- --strict)..."
+  npm run --silent eval -- --strict
+fi
+
+echo "[pre-push] all checks passed."

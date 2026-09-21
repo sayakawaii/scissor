@@ -1,0 +1,216 @@
+import type { Tool } from "../types.js";
+
+/**
+ * Control tools are intercepted by the Agent loop and handled via UI callbacks
+ * rather than executed directly. Their run() is a safety fallback only.
+ */
+
+export const CONTROL_TOOL_NAMES = [
+  "ask_user",
+  "present_plan",
+  "restart_self",
+  "update_scratchpad",
+  "todo_write",
+  "spawn_subagent",
+  "spawn_subagents",
+] as const;
+
+export const askUserTool: Tool = {
+  name: "ask_user",
+  description:
+    "Ask the user a clarifying question when the request is ambiguous or you need a decision only they can make. Provide options when the answer is a choice (the user picks instead of typing). Set allow_multiple to let the user select several options. Prefer this over guessing.",
+  parameters: {
+    type: "object",
+    properties: {
+      question: { type: "string", description: "The question to ask the user." },
+      options: {
+        type: "array",
+        items: { type: "string" },
+        description: "Optional list of suggested answers to choose from.",
+      },
+      allow_multiple: {
+        type: "boolean",
+        description:
+          "If true (only meaningful with options), the user may select multiple answers.",
+      },
+    },
+    required: ["question"],
+  },
+  async run() {
+    return {
+      content: "ask_user was not intercepted by the UI layer.",
+      isError: true,
+    };
+  },
+};
+
+export const restartSelfTool: Tool = {
+  name: "restart_self",
+  description:
+    "Only available when running under the scissor supervisor. Call this after you have modified scissor's OWN source code and want the changes to take effect. The supervisor will verify the new build (type-check + build); if it passes, scissor restarts into the new version and this same conversation continues. If it fails, your changes are rolled back automatically. Do not call this for changes to an unrelated user project.",
+  parameters: {
+    type: "object",
+    properties: {
+      reason: {
+        type: "string",
+        description: "Short description of what you changed and why you are restarting.",
+      },
+    },
+    required: ["reason"],
+  },
+  async run() {
+    return {
+      content:
+        "restart_self is only available under the scissor supervisor (run `scissor supervise`).",
+      isError: true,
+    };
+  },
+};
+
+export const updateScratchpadTool: Tool = {
+  name: "update_scratchpad",
+  description:
+    "Update your working-memory scratchpad: the current goal, next step, last error, and files in play. The scratchpad is pinned into the system prompt, so it survives context compaction and restarts even when older messages are dropped. Keep it current during multi-step tasks so you never lose track of what you were doing. Only the fields you pass are changed; pass an empty string to clear a field.",
+  parameters: {
+    type: "object",
+    properties: {
+      goal: { type: "string", description: "The task you are working toward (replaces the current goal)." },
+      next_step: { type: "string", description: "The next concrete step (replaces the current one)." },
+      last_error: {
+        type: "string",
+        description: "The most recent unresolved error (replaces; pass empty string once resolved).",
+      },
+      files: {
+        type: "array",
+        items: { type: "string" },
+        description: "Workspace-relative files currently in play (replaces the list).",
+      },
+      note: { type: "string", description: "Append a single freeform working note." },
+      clear_notes: { type: "boolean", description: "Clear all working notes." },
+    },
+  },
+  async run() {
+    return {
+      content: "update_scratchpad was not intercepted by the agent loop.",
+      isError: true,
+    };
+  },
+};
+
+export const todoWriteTool: Tool = {
+  name: "todo_write",
+  description:
+    "Maintain a structured task list for the current request. Like the scratchpad it is pinned into the system prompt, so it survives compaction and restarts. " +
+    "USE IT for work with 3+ distinct steps, for a list of tasks the user gave you, and to capture follow-ups you discover along the way. " +
+    "SKIP IT for single-step or trivial requests and for pure questions — a one-item list is noise. " +
+    "Keep exactly one item in_progress at a time, mark an item completed as soon as it is done (not in a batch at the end), and cancel items that turn out to be unnecessary. " +
+    "Batch the call together with the tool calls that actually do the work; do not announce that you are updating the list.",
+  parameters: {
+    type: "object",
+    properties: {
+      todos: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Stable identifier; reuse it to update this item later." },
+            content: { type: "string", description: "What the task is, phrased as a concrete action." },
+            status: {
+              type: "string",
+              enum: ["pending", "in_progress", "completed", "cancelled"],
+              description: "Current state of the task.",
+            },
+          },
+          required: ["id", "status"],
+        },
+        description: "The task items to write.",
+      },
+      merge: {
+        type: "boolean",
+        description:
+          "True (the default) patches the listed items by id and appends new ones, leaving the rest untouched — pass only what changed. False replaces the whole list.",
+      },
+    },
+    required: ["todos"],
+  },
+  async run() {
+    return {
+      content: "todo_write was not intercepted by the agent loop.",
+      isError: true,
+    };
+  },
+};
+
+export const spawnSubagentTool: Tool = {
+  name: "spawn_subagent",
+  description:
+    "Delegate a focused, self-contained sub-task to a fresh sub-agent that has its own clean context and the same file/search/shell tools, running in the same workspace. Use it for large or noisy sub-tasks (e.g. 'investigate how X works across the codebase and report back', or 'implement and test module Y') so your own context stays focused — only the sub-agent's final summary comes back to you. The sub-agent cannot see this conversation, so provide a complete, standalone task description with all needed context. It runs autonomously (it cannot ask the user) and returns a concise summary.",
+  parameters: {
+    type: "object",
+    properties: {
+      task: {
+        type: "string",
+        description:
+          "A complete, standalone description of the sub-task, including all context the sub-agent needs and what to report back.",
+      },
+    },
+    required: ["task"],
+  },
+  async run() {
+    return {
+      content: "spawn_subagent was not intercepted by the agent loop.",
+      isError: true,
+    };
+  },
+};
+
+export const spawnSubagentsTool: Tool = {
+  name: "spawn_subagents",
+  description:
+    "Fan out several INDEPENDENT sub-tasks to sub-agents that run CONCURRENTLY, then collect their summaries (map-reduce). Use when you have 2+ tasks with no dependencies between them — e.g. 'audit each of these three modules', or 'write tests for A while documenting B'. Each sub-agent has its own clean context and the same file/search/shell tools in the same workspace, and returns a concise summary. IMPORTANT: because they share the workspace and run at the same time, the tasks MUST NOT edit the same files (that would race). For dependent/sequential work, or a single task, use spawn_subagent instead.",
+  parameters: {
+    type: "object",
+    properties: {
+      tasks: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "Two or more complete, standalone sub-task descriptions. Each must include all context its sub-agent needs and what to report back, and must operate on disjoint files.",
+      },
+    },
+    required: ["tasks"],
+  },
+  async run() {
+    return {
+      content: "spawn_subagents was not intercepted by the agent loop.",
+      isError: true,
+    };
+  },
+};
+
+export const presentPlanTool: Tool = {
+  name: "present_plan",
+  description:
+    "Before doing multi-step work that changes files or runs commands, present a concise numbered plan and wait for the user to approve it. If the user requests changes, revise and present again. Skip for trivial single-step requests.",
+  parameters: {
+    type: "object",
+    properties: {
+      summary: {
+        type: "string",
+        description: "One or two sentence summary of the goal.",
+      },
+      steps: {
+        type: "array",
+        items: { type: "string" },
+        description: "Ordered list of concrete, actionable steps.",
+      },
+    },
+    required: ["steps"],
+  },
+  async run() {
+    return {
+      content: "present_plan was not intercepted by the UI layer.",
+      isError: true,
+    };
+  },
+};

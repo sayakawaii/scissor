@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# local config & secrets (never commit api keys)
+.env
+.env.*
+config.json
+*.local.json
+
+# eval run artifacts (machine-specific timings)
+evals/
+
+# MCP config (may contain env/secrets) and saved tool images
+mcp.json
+.scissor/
+
+# logs
+*.log
+npm-debug.log*
+
+# editor / os
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

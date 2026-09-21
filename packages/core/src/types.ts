@@ -1,0 +1,234 @@
+/**
+ * Shared, UI-agnostic types for the scissor engine.
+ * The CLI (and any future GUI) depends only on these abstractions.
+ */
+import type { SandboxPolicy } from "./sandbox/policy.js";
+
+export type ProviderId = "deepseek" | "claude" | "gpt" | "glm";
+
+export type MessageRole = "system" | "user" | "assistant" | "tool";
+
+/** A single tool invocation requested by the model. */
+export interface ToolCall {
+  id: string;
+  name: string;
+  /** Parsed JSON arguments. */
+  arguments: Record<string, unknown>;
+}
+
+/** A conversation message in scissor's internal, provider-neutral format. */
+export interface Message {
+  role: MessageRole;
+  /** Text content. May be empty when the assistant only emits tool calls. */
+  content: string;
+  /** Present on assistant messages that request tool execution. */
+  toolCalls?: ToolCall[];
+  /** Present on tool-result messages: the id of the tool call being answered. */
+  toolCallId?: string;
+  /** Present on tool-result messages: the tool name, for readability. */
+  name?: string;
+}
+
+/**
+ * Structured working memory ("scratchpad"): a small, agent-maintained snapshot
+ * of the current task state. It is pinned into the system prompt so it survives
+ * context compaction and restarts verbatim (unlike the raw transcript).
+ */
+export interface Scratchpad {
+  /** The task the agent is currently working toward. */
+  goal?: string;
+  /** The next concrete step. */
+  nextStep?: string;
+  /** The most recent unresolved error, if any. */
+  lastError?: string;
+  /** Files currently in play (workspace-relative). */
+  files?: string[];
+  /** Freeform working notes. */
+  notes?: string[];
+}
+
+export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+
+/**
+ * One entry in the agent's structured task list. Complements the freeform
+ * scratchpad: where the scratchpad holds "what am I doing right now", the todo
+ * list holds an explicit, statused checklist of the whole task, so progress on
+ * long multi-step work is legible to both the model and the user.
+ */
+export interface TodoItem {
+  /** Stable, model-chosen identifier used to patch the item later. */
+  id: string;
+  content: string;
+  status: TodoStatus;
+}
+
+/** JSON-schema-ish parameter definition for a tool. */
+export interface ToolParametersSchema {
+  type: "object";
+  properties: Record<string, unknown>;
+  required?: string[];
+}
+
+/** Result returned from executing a tool. */
+export interface ToolResult {
+  /** Text fed back to the model. */
+  content: string;
+  isError?: boolean;
+}
+
+/** Context handed to a tool at execution time. */
+export interface ToolContext {
+  /** Absolute path of the workspace root; file ops are constrained here. */
+  workspaceRoot: string;
+  signal?: AbortSignal;
+  /**
+   * Workspace-relative glob patterns that mutating tools must refuse to touch.
+   * Used in self-edit mode to protect the safety machinery (supervisor, etc.).
+   */
+  protectedPaths?: string[];
+  /** Workspace-relative long-term memory file used by the `remember` tool. */
+  memoryFile?: string;
+  /**
+   * Sandbox policy for this run: the always-on write-protection denylist, read
+   * boundaries, and network policy. Unlike `protectedPaths` (an opt-in self-edit
+   * concern) this applies to every session.
+   */
+  sandbox?: SandboxPolicy;
+}
+
+/** A tool the agent can call. */
+export interface Tool {
+  name: string;
+  description: string;
+  parameters: ToolParametersSchema;
+  /** Whether this tool may mutate the system (used for approval policy). */
+  mutating?: boolean;
+  /**
+   * Optional human-readable preview of what running the tool would do
+   * (e.g. a unified diff or the command to run). Shown during approval.
+   */
+  preview?(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolPreview>;
+  run(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
+}
+
+/** How much the agent must confirm before running mutating tools. */
+export type ApprovalPolicy = "plan-gate" | "confirm-each" | "auto";
+
+/** The user's decision when asked to approve a mutating tool call. */
+export type ApprovalDecision = "approve" | "reject" | "always";
+
+/**
+ * Context handed to a guardrail's beforeTool hook: everything a policy hook may
+ * need to make a decision (the resolved tool, its preview, the execution
+ * context, the current approval policy, and a way to ask the user to approve).
+ */
+export interface GuardContext {
+  /** The resolved tool that is about to run. */
+  tool: Tool;
+  /** Preview (diff / command) computed for the call, if the tool provides one. */
+  preview?: ToolPreview;
+  /** The tool execution context (workspace root, protected paths, ...). */
+  ctx: ToolContext;
+  /** The agent's current approval policy. */
+  policy: ApprovalPolicy;
+  signal?: AbortSignal;
+  /** Ask the user to approve a mutating call (present when a UI is wired). */
+  requestApproval?(call: ToolCall, preview: ToolPreview): Promise<ApprovalDecision>;
+}
+
+/**
+ * Verdict returned by a guardrail's beforeTool hook. A veto may carry a custom
+ * ToolResult to feed back (e.g. a non-error "user rejected" message); otherwise
+ * the pipeline synthesizes a generic "blocked" error from `reason`.
+ */
+export type GuardResult =
+  | { allow: true }
+  | { allow: false; reason: string; result?: ToolResult };
+
+/**
+ * A guardrail is a unified lifecycle hook around tool execution. It can veto a
+ * tool call before it runs (beforeTool) and/or inspect or transform a tool's
+ * result after it runs (afterTool). Guardrails compose: they run in order, and a
+ * single veto blocks the call. Cross-cutting concerns — test-first (TDD) gating,
+ * approval prompts, oscillation detection, redaction, custom policy — are all
+ * expressed as guardrails so they live in one pipeline instead of the core loop.
+ */
+export interface Guardrail {
+  /** Stable identifier, surfaced in the block message and traces. */
+  name: string;
+  /** Authorize a tool call before it runs. Return a veto to block it. */
+  beforeTool?(call: ToolCall, gctx: GuardContext): GuardResult | Promise<GuardResult>;
+  /**
+   * Inspect a tool result after it runs. Return a new ToolResult to replace it
+   * (e.g. redaction), or nothing to leave it unchanged.
+   */
+  afterTool?(
+    call: ToolCall,
+    result: ToolResult,
+  ): ToolResult | void | Promise<ToolResult | void>;
+  /** Reset any per-session state (called on Agent.reset()). */
+  reset?(): void;
+}
+
+/** Preview info surfaced to the UI before a mutating tool runs. */
+export interface ToolPreview {
+  /** Short one-line summary, e.g. "edit src/index.ts" or "run: npm test". */
+  summary: string;
+  /** Optional detailed body (unified diff, command text, etc.). */
+  detail?: string;
+  /** True when the action is considered destructive (deletes, force, etc.). */
+  dangerous?: boolean;
+}
+
+/** Token usage reported by a provider, when available. */
+export interface Usage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
+/** Streaming/event callbacks emitted while a provider produces a response. */
+export interface ProviderCallbacks {
+  /** Called with incremental assistant text deltas. */
+  onText?: (delta: string) => void;
+  /** Called once when reasoning/thinking text streams (if supported). */
+  onReasoning?: (delta: string) => void;
+}
+
+export interface ChatParams {
+  messages: Message[];
+  tools?: Tool[];
+  signal?: AbortSignal;
+  callbacks?: ProviderCallbacks;
+}
+
+export interface ChatResult {
+  text: string;
+  toolCalls: ToolCall[];
+  usage?: Usage;
+  /** Raw finish reason from the provider, for diagnostics. */
+  finishReason?: string;
+}
+
+/** Outcome of running automated project verification (lint/type-check/tests). */
+export interface VerificationResult {
+  ok: boolean;
+  /** One-line summary, e.g. "typecheck failed" or "2 checks passed". */
+  summary: string;
+  /** Detailed output (trimmed) fed back to the model on failure. */
+  output?: string;
+  /** True when there was nothing to verify (no commands detected). */
+  skipped?: boolean;
+}
+
+/** Runs project verification. Provided by the UI/host, kept out of core. */
+export type VerifyFn = (info: {
+  editedFiles: string[];
+}) => Promise<VerificationResult>;
+
+/** A large-language-model provider (deepseek, claude, gpt, glm...). */
+export interface LLMProvider {
+  readonly id: ProviderId;
+  readonly model: string;
+  chat(params: ChatParams): Promise<ChatResult>;
+}
