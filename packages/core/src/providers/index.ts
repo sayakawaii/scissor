@@ -17,6 +17,8 @@ import {
 export { AnthropicProvider } from "./anthropic.js";
 export { OpenAICompatibleProvider } from "./openai-compatible.js";
 export { safeParseJsonObject } from "./util.js";
+export { ScriptedProvider, SCRIPT_EXHAUSTED_TEXT } from "./scripted.js";
+export type { ScriptedProviderOptions } from "./scripted.js";
 export {
   RouterProvider,
   routeTurn,

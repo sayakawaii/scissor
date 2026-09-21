@@ -23,6 +23,8 @@ import { VERSION } from "./version.js";
 
 interface GlobalOpts {
   provider?: string;
+  /** Pin a specific model for this session, overriding config/defaults. */
+  model?: string;
   safe?: boolean;
   auto?: boolean;
   chatOnly?: boolean;
@@ -59,6 +61,7 @@ function resolvePolicy(opts: GlobalOpts): ApprovalPolicy {
 function toChatOptions(opts: GlobalOpts): ChatOptions {
   return {
     provider: resolveProvider(opts.provider),
+    ...(opts.model?.trim() ? { model: opts.model.trim() } : {}),
     approvalPolicy: resolvePolicy(opts),
     chatOnly: opts.chatOnly,
     resume: opts.resume,
@@ -81,6 +84,7 @@ program
   .description("A personal Cursor-like terminal AI coding agent")
   .version(VERSION, "-v, --version", "output the version number")
   .option("-p, --provider <id>", `provider to use (${PROVIDER_IDS.join(", ")})`)
+  .option("-m, --model <name>", "pin a specific model for this session (overrides config defaults)")
   .option("--safe", "confirm every file change and command before running")
   .option("--auto", "run everything automatically (only confirm dangerous actions)")
   .option("--chat-only", "disable file edits and command execution")
@@ -221,6 +225,16 @@ program
   .action(async (opts) => {
     const { runAblateCommand } = await import("./commands/ablate.js");
     process.exit(await runAblateCommand(opts));
+  });
+
+program
+  .command("demo")
+  .description("run a full coding task end to end with no API key (scripted model replies)")
+  .option("--dir <path>", "run in this directory instead of a fresh temp one (implies --keep)")
+  .option("--keep", "keep the temporary workspace afterwards")
+  .action(async (opts) => {
+    const { runDemoCommand } = await import("./commands/demo.js");
+    process.exit(await runDemoCommand(opts));
   });
 
 program

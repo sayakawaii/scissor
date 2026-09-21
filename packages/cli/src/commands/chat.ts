@@ -24,6 +24,8 @@ import { VoiceController } from "../voice/controller.js";
 
 export interface ChatOptions {
   provider?: ProviderId;
+  /** Pin a specific model for this session, overriding config defaults. */
+  model?: string;
   approvalPolicy?: ApprovalPolicy;
   chatOnly?: boolean;
   /** Resume a saved session by id or file path. */

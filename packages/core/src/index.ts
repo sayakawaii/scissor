@@ -27,6 +27,8 @@ export {
   MissingApiKeyError,
   AnthropicProvider,
   OpenAICompatibleProvider,
+  ScriptedProvider,
+  SCRIPT_EXHAUSTED_TEXT,
   RouterProvider,
   routeTurn,
   HARD_KEYWORDS,
@@ -41,4 +43,5 @@ export type {
   RouteTier,
   RouterTier,
   RouterProviderOptions,
+  ScriptedProviderOptions,
 } from "./providers/index.js";

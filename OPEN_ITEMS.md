@@ -525,6 +525,18 @@ Phase 0's measurement gates whether Phases 1+ are worth building.
 
 ## 8. UX polish
 
+- [x] **Zero-key replay demo**: `scissor demo` runs a complete task (locate,
+  reproduce, fix, re-run a failing test) with only the model's replies scripted —
+  the agent loop, plan gate, retrieval, edit engine, guardrails and shell all
+  execute for real in a temp workspace, and the seeded test genuinely fails
+  before the fix and passes after. Labelled a replay before and after the run;
+  never loads config or reads a key. Shortest path from clone to seeing the
+  product work is `npm install && npm run demo` (no build, no key).
+  (`providers/scripted.ts`, `cli/demo/scenario.ts`, `commands/demo.ts`;
+  deterministic `scripts/test-demo.mts`.)
+- [x] `-m, --model <name>` pins a model per session (the plumbing the benchmark
+  arms already needed, surfaced as a flag the README had been promising).
+
 - [x] Installable global command: root `bin` + `npm link` (documented in the
   README) so `scissor` runs from any directory.
 - [x] `--auto` no longer stalls on plan approval: plans are auto-approved (shown

@@ -1,8 +1,76 @@
 # scissor
 
-A personal, Cursor-like terminal AI coding agent for Windows (and cross-platform). Chat with an LLM that can read, search, edit files and run commands in your current directory. No login, no plugin marketplace — just a fast local agent (with optional MCP tools).
+A terminal AI coding agent. It reads, searches and edits files, runs commands,
+verifies its own work, and asks before it does anything irreversible — in your
+current directory, with no login and no server.
 
-Supports five providers out of the box: **DeepSeek**, **Claude (Anthropic)**, **OpenAI GPT**, **GLM (Zhipu)**, and **Nebius Token Factory** (NVIDIA Nemotron open models).
+Supports five providers: **DeepSeek**, **Claude (Anthropic)**, **OpenAI GPT**,
+**GLM (Zhipu)** and **Nebius Token Factory** (NVIDIA Nemotron open models).
+
+## See it work (no API key)
+
+```bash
+git clone https://github.com/sayakawaii/scissor && cd scissor
+npm install
+npm run demo
+```
+
+Three commands, no key, no build, nothing to configure. `scissor demo` runs a
+complete task end to end: a small project whose test fails, which the agent
+locates, reproduces, fixes and re-runs.
+
+**The model's replies are pre-scripted and no network request is made.**
+Everything else is real — the same agent loop, plan gate, retrieval, edit engine,
+guardrails and shell that a live session uses, against a real temporary
+workspace. The test genuinely fails before the fix and genuinely passes after,
+because `node` really runs it. The run is labelled a replay on screen, before
+and after, so it cannot be mistaken for live inference.
+
+```
+→ retrieve  median calculation
+→ read_file  src/stats.js
+→ run_shell  node test/stats.test.js      ✗ Exit code: 1
+→ edit_file  src/stats.js                 ✓ Edited src/stats.js: 1 replacement(s).
+→ run_shell  node test/stats.test.js      ✓ Exit code: 0
+```
+
+## Run it for real
+
+Add a provider key once, then give it a task. Any one of the five providers
+works; DeepSeek and Nemotron Nano are the cheapest to try.
+
+```bash
+npm run build
+npm link                      # optional: puts `scissor` on your PATH
+scissor config                # store an API key in ~/.scissor/config.json
+scissor "add a --json flag to the export command and a test for it"
+```
+
+Or without installing anything globally:
+
+```bash
+DEEPSEEK_API_KEY=... npm run dev -- "explain what this repo does"
+```
+
+`scissor` with no arguments opens an interactive REPL. Everything else —
+sub-agents, MCP tools, the eval harness, the benchmark — is documented below.
+
+## What it does
+
+- **Agent loop with a plan gate** — presents a numbered plan for non-trivial
+  work and waits for approval, then executes without re-asking per step.
+- **Reliable edits** — a dedicated edit engine with CRLF/whitespace-tolerant
+  matching and atomic multi-edit application, instead of whole-file rewrites.
+- **Codebase retrieval** — a repo map in the prompt plus ranked keyword search
+  with query rewriting, so it locates code instead of blind-grepping.
+- **Web search** — [Tavily](https://tavily.com)-backed `web_search` for what the
+  workspace cannot answer (unfamiliar libraries, current third-party APIs).
+- **Verification closed-loop** — detects the project's own lint/typecheck/test
+  commands, runs them after edits, and feeds failures back to itself.
+- **Safety that fails closed** — an always-on write denylist, a shell command
+  classifier that refuses rather than prompts, and optional Docker/WSL isolation.
+- **Measurement** — an eval suite, a harder benchmark, an ablation matrix, and
+  `scissor benchmark` for cross-model comparison with confidence intervals.
 
 ## Architecture
 
@@ -125,25 +193,18 @@ flowchart TD
 - **Local-first, minimal deps.** No server, no database, no vector store — just
   files under `~/.scissor` and the workspace.
 
-## Requirements
+## Install (detail)
 
-- Node.js >= 18 (LTS recommended)
-
-## Install
-
-```bash
-npm install
-npm run build
-```
-
-To run without building, use `npm run dev -- <args>` (executes via `tsx`).
+Node.js >= 18 (LTS recommended) is the only prerequisite. `npm install` is
+enough to run `npm run demo` or `npm run dev -- <args>`, both of which execute
+TypeScript directly via `tsx`; `npm run build` is needed only for the `scissor`
+bin.
 
 ### Make `scissor` available everywhere
 
 The repo exposes a `scissor` bin. After building, link it onto your `PATH` once:
 
 ```bash
-npm install
 npm run build
 npm link          # creates a global `scissor` command (Windows: scissor.cmd)
 ```
@@ -199,9 +260,17 @@ One-shot:
 scissor "explain what this repo does"
 ```
 
+Replay demo (no API key, described at the top of this README):
+
+```bash
+scissor demo             # or `npm run demo` without building
+scissor demo --keep      # keep the temporary workspace to inspect the diff
+```
+
 Options:
 
 - `-p, --provider <id>` — choose `deepseek | claude | gpt | glm | nebius`
+- `-m, --model <name>` — pin a specific model for this session
 - `--safe` — confirm every file change and command
 - `--auto` — run everything automatically (only confirm dangerous actions)
 - `--chat-only` — disable file edits and command execution
