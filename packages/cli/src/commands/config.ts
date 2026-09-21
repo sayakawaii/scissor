@@ -28,6 +28,7 @@ export async function runConfigWizard(): Promise<void> {
           value: `set:${id}`,
         })),
         { name: "Set default provider", value: "default" },
+        { name: "Configure web search (Tavily)", value: "websearch" },
         { name: "Save and exit", value: "save" },
         { name: "Exit without saving", value: "quit" },
       ],
@@ -48,6 +49,8 @@ export async function runConfigWizard(): Promise<void> {
         })),
         default: config.defaultProvider,
       });
+    } else if (action === "websearch") {
+      await configureWebSearch(config);
     } else if (action.startsWith("set:")) {
       const id = action.slice(4) as ProviderId;
       await configureProvider(config, id);
@@ -93,6 +96,26 @@ async function configureProvider(
   process.stdout.write(theme.ok(`Updated ${defaults.label}.\n`));
 }
 
+/** Key for the `web_search` tool. Blank keeps the current value; "-" clears it. */
+async function configureWebSearch(config: ScissorConfig): Promise<void> {
+  process.stdout.write(
+    theme.dim("Powers the web_search tool. Get a key at https://tavily.com.\n"),
+  );
+  const key = await password({
+    message: "Tavily API key (blank to keep current, '-' to clear)",
+    mask: "*",
+  });
+  const trimmed = key.trim();
+  if (trimmed === "-") {
+    config.webSearch = {};
+    process.stdout.write(theme.ok("Cleared the Tavily key; web_search is disabled.\n"));
+    return;
+  }
+  if (trimmed.length === 0) return;
+  config.webSearch = { ...config.webSearch, apiKey: trimmed };
+  process.stdout.write(theme.ok("Updated web search (Tavily).\n"));
+}
+
 function printStatus(config: ScissorConfig): void {
   process.stdout.write("\n" + theme.bold("Current configuration:") + "\n");
   for (const id of PROVIDER_IDS) {
@@ -105,5 +128,9 @@ function printStatus(config: ScissorConfig): void {
       `  ${PROVIDER_DEFAULTS[id].label.padEnd(18)} ${status} ${theme.dim(resolveModel(config, id))}${marker}\n`,
     );
   }
+  const webKey = config.webSearch?.apiKey;
+  process.stdout.write(
+    `  ${"Tavily web search".padEnd(18)} ${webKey ? theme.ok("key set") : theme.dim("no key")}\n`,
+  );
   process.stdout.write("\n");
 }

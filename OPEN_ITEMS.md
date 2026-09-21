@@ -19,6 +19,14 @@ needs to proactively surface the right context.
   scored against each phrasing in one pass; best match per file is kept. Lifts
   recall for vague/misspelled requests. (`retrieveMulti` in `repo-index.ts` +
   `tools/retrieve.ts`; covered by `scripts/test-retrieve.mts`)
+- [x] Web search (`web_search`) for questions the workspace cannot answer —
+  unfamiliar libraries, third-party API behavior, dependency error messages.
+  Read-only, calls the Tavily HTTP API with `fetch` (no SDK, so `HTTPS_PROXY`
+  works), refuses under a `network: "none"` sandbox, and reports a clean dead
+  end when no key is configured. Key via `scissor config` or `TAVILY_API_KEY`.
+  (`tools/web-search.ts`; covered by `scripts/test-tavily.mts`)
+- [ ] Fetch/read a specific URL end-to-end (`web_search` returns extracts only,
+  so exact API signatures still need the page itself).
 - [ ] Optional embedding index for semantic retrieval; rank chunks by relevance
   and inject the top-K into context automatically.
 - [ ] Fuzzy token matching (edit-distance) inside `retrieve` so a single typo'd

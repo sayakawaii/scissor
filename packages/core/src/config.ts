@@ -70,6 +70,14 @@ export interface ScissorConfig {
   router?: RouterConfig;
   /** Voice I/O (spoken conversation via `/voice`). */
   voice?: VoiceConfig;
+  /** Web search (Tavily) for the `web_search` tool. Absent disables the tool. */
+  webSearch?: WebSearchSettings;
+}
+
+/** Stored settings for the `web_search` tool. */
+export interface WebSearchSettings {
+  /** Tavily API key. Overridden by TAVILY_API_KEY when that is set. */
+  apiKey?: string;
 }
 
 /** Built-in defaults per provider: default model and base URL. */
@@ -190,6 +198,10 @@ export function applyEnvOverrides(config: ScissorConfig): ScissorConfig {
     if (envKey && envKey.trim().length > 0) {
       merged.providers[id] = { ...merged.providers[id], apiKey: envKey.trim() };
     }
+  }
+  const tavilyKey = process.env.TAVILY_API_KEY;
+  if (tavilyKey && tavilyKey.trim().length > 0) {
+    merged.webSearch = { ...merged.webSearch, apiKey: tavilyKey.trim() };
   }
   const envDefault = process.env.SCISSOR_PROVIDER as ProviderId | undefined;
   if (envDefault && PROVIDER_IDS.includes(envDefault)) {

@@ -34,7 +34,7 @@ flowchart TB
   subgraph CORE["packages/core — engine"]
     agent["agent.ts · run loop"]
     guards["guardrails · TDD / oscillation / approval"]
-    tools["tools · read/write/edit/shell/search/retrieve/diagnostics/remember + control"]
+    tools["tools · read/write/edit/shell/search/retrieve/web_search/diagnostics/remember + control"]
     edit["edit-engine.ts"]
     prompt["prompt.ts + repo-index.ts"]
     prov["providers · router + adapters"]
@@ -165,7 +165,7 @@ node packages/cli/dist/index.js config
 npm run dev -- config
 ```
 
-Environment variables override stored keys: `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GLM_API_KEY`, `NEBIUS_API_KEY`, and `SCISSOR_PROVIDER`.
+Environment variables override stored keys: `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GLM_API_KEY`, `NEBIUS_API_KEY`, `TAVILY_API_KEY`, and `SCISSOR_PROVIDER`.
 
 ### Nebius Token Factory (NVIDIA Nemotron)
 
@@ -234,6 +234,34 @@ scored against each phrasing in one pass and the *best* match per file is kept, 
 a file that matches any one phrasing still surfaces. This lifts recall for "where
 is X" questions without an embedding index. (Language rewriting is the model's job;
 merging/ranking is the tool's.)
+
+## Web search
+
+Repo retrieval only answers what the workspace already contains. An unfamiliar
+library, the current signature of a third-party API, or an error string thrown by
+a dependency are all dead ends for `retrieve`/`grep` — and a dead end is where a
+model starts inventing APIs. The `web_search` tool closes that gap: it queries
+[Tavily](https://tavily.com) and returns ranked results with summarized page
+content, plus an optional one-paragraph answer.
+
+Add a key via `scissor config` → *Configure web search (Tavily)*, or set
+`TAVILY_API_KEY`:
+
+```bash
+TAVILY_API_KEY=tvly-... scissor "does undici support HTTP/2 yet?"
+```
+
+Details worth knowing:
+
+- **Read-only**, so it parallelizes with other reads and never prompts for approval.
+- **Optional.** With no key configured the tool reports a clear dead end ("web
+  search is not configured") instead of failing the turn, and the prompt guidance
+  that points the agent at it is only injected when the tool is present.
+- **Sandbox-aware.** Under a `network: "none"` sandbox policy the call is refused
+  rather than quietly reaching the internet.
+- **No SDK.** It calls the Tavily HTTP API with the global `fetch`, which keeps
+  the dependency count flat and — unlike the provider SDKs, see
+  `packages/core/src/providers/proxy.ts` — honors `HTTPS_PROXY`.
 
 ## Intent clarification
 

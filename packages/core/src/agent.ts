@@ -38,6 +38,7 @@ import type {
   Usage,
   VerificationResult,
   VerifyFn,
+  WebSearchConfig,
 } from "./types.js";
 
 export interface PlanDecision {
@@ -166,6 +167,8 @@ export interface AgentOptions {
   summarize?: SummarizeFn;
   /** Workspace-relative file used by the `remember` tool for long-term memory. */
   memoryFile?: string;
+  /** Credentials + transport handed to the `web_search` tool. */
+  webSearch?: WebSearchConfig;
   /**
    * Test-first (TDD) mode. When true, the agent refuses to write/edit a
    * non-test source file until at least one test file has been created or
@@ -246,6 +249,7 @@ export class Agent {
   private compactThresholdTokens: number;
   private summarize: SummarizeFn;
   private memoryFile?: string;
+  private webSearch?: WebSearchConfig;
   private subagentDepth: number;
   private maxSubagentDepth: number;
   /**
@@ -308,6 +312,7 @@ export class Agent {
         : Math.floor(this.maxContextTokens * 0.7));
     this.summarize = opts.summarize ?? ((msgs) => this.summarizeWithProvider(msgs));
     this.memoryFile = opts.memoryFile;
+    this.webSearch = opts.webSearch;
     this.subagentDepth = opts.subagentDepth ?? 0;
     this.maxSubagentDepth = opts.maxSubagentDepth ?? 1;
     this.autoClarify = opts.autoClarify ?? false;
@@ -528,6 +533,7 @@ export class Agent {
       signal,
       protectedPaths: this.protectedPaths,
       memoryFile: this.memoryFile,
+      webSearch: this.webSearch,
       sandbox: this.sandbox,
     };
     let finalText = "";
@@ -713,6 +719,7 @@ export class Agent {
       signal,
       protectedPaths: this.protectedPaths,
       memoryFile: this.memoryFile,
+      webSearch: this.webSearch,
       sandbox: this.sandbox,
     };
     const call: ToolCall = { id: `manual-${Date.now()}`, name, arguments: args };
@@ -748,6 +755,7 @@ export class Agent {
       autoCompact: this.autoCompact,
       summarize: this.summarize,
       memoryFile: this.memoryFile,
+      webSearch: this.webSearch,
       subagentDepth: this.subagentDepth + 1,
       maxSubagentDepth: this.maxSubagentDepth,
       guardrails: this.userGuardrails,

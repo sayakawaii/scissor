@@ -76,6 +76,23 @@ export interface ToolResult {
   isError?: boolean;
 }
 
+/**
+ * Credentials and transport for the `web_search` tool.
+ *
+ * The engine never reads config or env on its own, so the session injects this
+ * the same way it injects `memoryFile`. `fetchImpl` is the seam for tests and
+ * for custom transports; leaving it unset uses the global `fetch`, which (unlike
+ * the provider SDKs — see providers/proxy.ts) already honors `HTTPS_PROXY`.
+ */
+export interface WebSearchConfig {
+  /** Tavily API key. Absent means the tool reports a dead end rather than failing. */
+  apiKey?: string;
+  /** Override the search endpoint (tests, self-hosted gateways). */
+  endpoint?: string;
+  /** Injected fetch implementation; defaults to the global `fetch`. */
+  fetchImpl?: typeof globalThis.fetch;
+}
+
 /** Context handed to a tool at execution time. */
 export interface ToolContext {
   /** Absolute path of the workspace root; file ops are constrained here. */
@@ -94,6 +111,8 @@ export interface ToolContext {
    * concern) this applies to every session.
    */
   sandbox?: SandboxPolicy;
+  /** Credentials + transport for `web_search`; absent disables the tool cleanly. */
+  webSearch?: WebSearchConfig;
 }
 
 /** A tool the agent can call. */

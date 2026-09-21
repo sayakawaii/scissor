@@ -457,6 +457,7 @@ export async function createSession(opts: SessionOptions = {}): Promise<Session>
     sandbox,
     verify,
     memoryFile: MEMORY_FILENAME,
+    webSearch: { apiKey: config.webSearch?.apiKey },
     tddMode: tdd,
     initialScratchpad: opts.resume?.scratchpad,
     initialTodos: opts.resume?.todos,

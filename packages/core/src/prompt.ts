@@ -128,6 +128,7 @@ function renderSandboxSection(policy: SandboxPolicy): string {
 
 /** Build the system prompt that governs scissor's agent behavior. */
 export function buildSystemPrompt(ctx: PromptContext): string {
+  const hasWebSearch = (ctx.tools ?? []).some((t) => t.name === "web_search");
   const planGuidance =
     ctx.approvalPolicy === "plan-gate"
       ? `For any non-trivial task that will modify files or run commands, FIRST call the present_plan tool with a concise numbered plan and wait for approval. After the user approves, carry out the plan step by step without asking for approval on each individual step (except genuinely destructive actions, which are always confirmed by the environment). For trivial, single-step requests, you may skip the plan.`
@@ -154,6 +155,11 @@ export function buildSystemPrompt(ctx: PromptContext): string {
       [
         `- ${planGuidance}`,
         `- Gather context before acting: read relevant files and search the codebase rather than guessing.`,
+        ...(hasWebSearch
+          ? [
+              `- When the answer is not in this repository — an unfamiliar library, the current behavior of a third-party API, an error message from a dependency — call web_search rather than guessing from memory. If it reports that no API key is configured, treat web search as unavailable for the rest of the session and say so instead of retrying.`,
+            ]
+          : []),
         `- Make the smallest correct change. Prefer edit_file over rewriting whole files.`,
         `- When a request is ambiguous or depends on a user decision, call ask_user instead of assuming.`,
         `- After making changes, verify them when practical (e.g. run tests or the program).`,
