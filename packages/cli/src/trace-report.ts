@@ -27,6 +27,11 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   "gpt-4o-mini": { inputPer1M: 0.15, outputPer1M: 0.6 },
   // Zhipu GLM (approximate USD-equivalent).
   "glm-4-plus": { inputPer1M: 7, outputPer1M: 7 },
+  // NVIDIA Nemotron on Nebius Token Factory (list price per the Token Factory
+  // model catalog). Keys match the model ids in PROVIDER_DEFAULTS/PREMIUM_MODELS.
+  "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B": { inputPer1M: 0.06, outputPer1M: 0.24 },
+  "nvidia/nemotron-3-super-120b-a12b": { inputPer1M: 0.3, outputPer1M: 0.9 },
+  "nvidia/Nemotron-3-Ultra-550b-a55b": { inputPer1M: 1, outputPer1M: 3 },
 };
 
 /** Resolve a price for a model name, tolerating exact or prefix matches. */
@@ -34,7 +39,16 @@ export function priceFor(model: string | undefined): ModelPrice | undefined {
   if (!model) return undefined;
   if (MODEL_PRICES[model]) return MODEL_PRICES[model];
   const key = Object.keys(MODEL_PRICES).find((k) => model.startsWith(k) || k.startsWith(model));
-  return key ? MODEL_PRICES[key] : undefined;
+  if (key) return MODEL_PRICES[key];
+  // Model ids reach us from config and CLI flags, where casing drifts (the
+  // Nemotron ids mix cases). An unpriced arm silently drops out of the cost
+  // report, so fall back to a case-insensitive match before giving up.
+  const lower = model.toLowerCase();
+  const ci = Object.keys(MODEL_PRICES).find((k) => {
+    const kl = k.toLowerCase();
+    return lower.startsWith(kl) || kl.startsWith(lower);
+  });
+  return ci ? MODEL_PRICES[ci] : undefined;
 }
 
 export interface ModelTokens {

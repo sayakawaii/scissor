@@ -327,6 +327,16 @@ pass rate + tokens/task + est. cost/task; repeat N times for stochasticity.
   (`packages/cli/src/commands/ablate.ts`, `buildAblation`/`formatAblation` in
   `eval/compare.ts`; deterministic `scripts/test-ablate.mts`.) Extend with more
   knobs (router, experience-advice, clarify) as they prove interesting.
+- [x] **(C2) Cross-model comparison + publishable artifact**: `scissor benchmark`
+  runs a fixed task set across several provider/model arms (N runs each, router
+  and experience off so only the model varies) and emits JSON + Markdown to the
+  committed `benchmarks/` directory. Per arm: pass rate with a 95% Wilson
+  interval, tokens/cost/turns/files per task, ACRR, and the cost-normalized view
+  (cost per passing task, passes per dollar). A leader is called significant only
+  when the intervals are disjoint; otherwise the report says so explicitly.
+  Arms can pin a model (`label=provider:model`), which is what makes comparing
+  model tiers on one provider possible. (`eval/matrix.ts`, `commands/benchmark.ts`,
+  `SessionOptions.model`; deterministic `scripts/test-benchmark.mts`.)
 - [~] **(D) Real-codebase task set (Databricks-faithful)**: curate a harder
   benchmark of real, reviewed tasks on a real repo (scissor itself and/or a chosen
   OSS repo) via `eval-gen` from actual sessions, instead of the small synthetic

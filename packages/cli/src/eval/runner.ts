@@ -85,10 +85,23 @@ export type EvalSessionFactory = (opts: {
   workspaceRoot: string;
   provider?: ProviderId;
   router?: boolean;
+  /** Pin a specific model, so a benchmark can vary it with the harness fixed. */
+  model?: string;
 }) => Promise<EvalSession>;
 
-const defaultSessionFactory: EvalSessionFactory = async ({ workspaceRoot, provider, router }) => {
-  const s = await createSession({ workspaceRoot, provider, router, approvalPolicy: "auto" });
+const defaultSessionFactory: EvalSessionFactory = async ({
+  workspaceRoot,
+  provider,
+  router,
+  model,
+}) => {
+  const s = await createSession({
+    workspaceRoot,
+    provider,
+    router,
+    approvalPolicy: "auto",
+    ...(model ? { model } : {}),
+  });
   return { agent: s.agent, providerId: s.providerId, model: s.model, tracer: s.tracer };
 };
 
@@ -201,12 +214,18 @@ function trajectoryFields(
 export function scissorTarget(
   provider: ProviderId | undefined,
   factory: EvalSessionFactory = defaultSessionFactory,
-  targetOpts: { router?: boolean } = {},
+  targetOpts: { router?: boolean; model?: string; label?: string } = {},
 ): AgentTarget {
   return {
-    label: (provider ?? "default") + (targetOpts.router ? "+router" : ""),
+    label:
+      targetOpts.label ?? (provider ?? "default") + (targetOpts.router ? "+router" : ""),
     async runTask(task, workspaceRoot, timeoutMs) {
-      const session = await factory({ workspaceRoot, provider, router: targetOpts.router });
+      const session = await factory({
+        workspaceRoot,
+        provider,
+        router: targetOpts.router,
+        ...(targetOpts.model ? { model: targetOpts.model } : {}),
+      });
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       const base = session.tracer ? tracingQuietCallbacks(session.tracer) : QUIET_CALLBACKS;
@@ -369,6 +388,8 @@ export interface RunEvalOptions {
   bare?: boolean;
   /** Explicit task list; overrides taskIds resolution (used to reach bench tasks). */
   tasks?: EvalTask[];
+  /** Pin a model for every target, so a benchmark can vary it with the harness fixed. */
+  model?: string;
 }
 
 /** Run the default eval suite with scissor (or the bare baseline) per provider. */
@@ -377,7 +398,12 @@ export async function runEval(opts: RunEvalOptions = {}): Promise<ProviderRun[]>
   const factory = opts.sessionFactory ?? defaultSessionFactory;
   const providers = opts.providers ?? [undefined as unknown as ProviderId];
   const targets = providers.map((p) =>
-    opts.bare ? bareTarget({ provider: p }) : scissorTarget(p, factory, { router: opts.router }),
+    opts.bare
+      ? bareTarget({ provider: p })
+      : scissorTarget(p, factory, {
+          router: opts.router,
+          ...(opts.model ? { model: opts.model } : {}),
+        }),
   );
   return runSuite(tasks, targets, {
     keep: opts.keep,

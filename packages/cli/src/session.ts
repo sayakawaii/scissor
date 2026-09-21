@@ -119,6 +119,12 @@ export interface SessionOptions {
   mcp?: boolean;
   /** Enable the heuristic model router (cheap/strong tiers). */
   router?: boolean;
+  /**
+   * Pin a specific model for this session, overriding config/defaults. Applied
+   * in memory only (never saved), so a benchmark can vary the model while
+   * holding the rest of the harness fixed.
+   */
+  model?: string;
   /** Write a structured JSONL trace of the session to ~/.scissor/traces. */
   trace?: boolean;
 }
@@ -326,6 +332,15 @@ function parseRoutingRules(env: string | undefined): RoutingRule[] {
 export async function createSession(opts: SessionOptions = {}): Promise<Session> {
   const config = applyEnvOverrides(await loadConfig());
   const providerId = opts.resume?.provider ?? opts.provider ?? config.defaultProvider;
+  // An explicit model pin is layered onto the in-memory config so every
+  // downstream consumer (provider creation, reported model, cost pricing)
+  // agrees on which model actually ran.
+  if (opts.model?.trim()) {
+    config.providers[providerId] = {
+      ...config.providers[providerId],
+      model: opts.model.trim(),
+    };
+  }
   const sessionId = opts.resume?.id ?? newSessionId();
   // Tracing is on by default (it feeds the trace -> eval flywheel and costs only
   // disk). Disable per-run with opts.trace===false or SCISSOR_NO_TRACE=1.

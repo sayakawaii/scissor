@@ -727,6 +727,37 @@ runs are POSIX-oriented (mac/Linux/WSL); on native Windows, run goose under WSL.
 
 Latest scissor baseline (DeepSeek `deepseek-chat`): **5/5 (100%)**.
 
+### Provider comparison (`scissor benchmark`)
+
+`bench` answers "did this agent pass?". `benchmark` answers the harder question:
+**which model should I run this agent on, and what does each one cost me?** It
+runs a fixed task set across several provider/model arms, repeats each arm N
+times so the variance is visible, and writes both a JSON artifact and a
+Markdown report to `benchmarks/` (committed, unlike the gitignored `evals/`
+scratch).
+
+```bash
+# See the plan and the exact number of provider calls. Spends nothing.
+scissor benchmark --arm nebius,deepseek --tasks eval --runs 5 --dry-run
+
+# Compare two models on one provider by pinning each as its own arm.
+scissor benchmark \
+  --arm "nano=nebius:nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B,super=nebius:nvidia/nemotron-3-super-120b-a12b" \
+  --tasks eval --runs 5
+```
+
+Per arm the report carries pass rate with a 95% Wilson confidence interval,
+tokens/task, cost/task, turns/task, files/task and ACRR, plus the
+cost-normalized view — cost per passing task and passes per dollar — because
+pass rate on its own just rewards the most expensive model.
+
+One arm is one model: the router is off and the experience layer is disabled, so
+the harness is fixed and only the model varies. The report declares a leader
+**significant only when the two 95% intervals are disjoint**, and prints
+"NOT statistically significant" otherwise rather than implying a winner the
+sample size cannot support. See [`benchmarks/README.md`](benchmarks/README.md)
+for the methodology and its limitations.
+
 ## MCP servers (external tools)
 
 scissor has a built-in [Model Context Protocol](https://modelcontextprotocol.io/)

@@ -19,8 +19,7 @@ import { createSession, persistSession } from "./session.js";
 import { getScissorRepoRoot } from "./self/repo.js";
 import { runSupervisor } from "./self/supervisor.js";
 import { theme } from "./ui/render.js";
-
-const VERSION = "0.2.0";
+import { VERSION } from "./version.js";
 
 interface GlobalOpts {
   provider?: string;
@@ -222,6 +221,24 @@ program
   .action(async (opts) => {
     const { runAblateCommand } = await import("./commands/ablate.js");
     process.exit(await runAblateCommand(opts));
+  });
+
+program
+  .command("benchmark")
+  .description("compare providers/models on a fixed task set; writes JSON + Markdown to benchmarks/")
+  .requiredOption(
+    "--arm <specs>",
+    'comma-separated arms: "nebius,deepseek" or "label=provider:model" to pin a model',
+  )
+  .option("--tasks <set>", "task set: eval | bench | all (default: eval)")
+  .option("-t, --task <ids>", "comma-separated task ids (overrides --tasks)")
+  .option("--runs <n>", "iterations per arm; more runs shrink the confidence interval (default: 1)")
+  .option("--timeout <ms>", "per-task timeout in ms (default: 150000)")
+  .option("--out <dir>", "output directory for artifacts (default: benchmarks/)")
+  .option("--dry-run", "print the plan and the task-run count, then exit without calling any provider")
+  .action(async (opts) => {
+    const { runBenchmarkCommand } = await import("./commands/benchmark.js");
+    process.exit(await runBenchmarkCommand(opts));
   });
 
 program

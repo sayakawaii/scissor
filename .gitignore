@@ -11,8 +11,11 @@ dist/
 config.json
 *.local.json
 
-# eval run artifacts (machine-specific timings)
+# eval run scratch (machine-specific timings, raw per-task detail)
 evals/
+# NOTE: benchmarks/ is deliberately NOT ignored — published comparison artifacts
+# are committed so results are reviewable and reproducible. `scissor benchmark`
+# writes only aggregates plus provenance there (no paths, hosts, users, keys).
 
 # MCP config (may contain env/secrets) and saved tool images
 mcp.json
