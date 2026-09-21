@@ -197,6 +197,14 @@ export interface ToolPreview {
   detail?: string;
   /** True when the action is considered destructive (deletes, force, etc.). */
   dangerous?: boolean;
+  /**
+   * Set when the call cannot be executed at all, carrying the message to feed
+   * back. Distinct from `dangerous`: dangerous means "ask first", blocked means
+   * there is no answer that would let it run. The approval gate refuses these
+   * outright instead of prompting, because asking a question whose answer is
+   * ignored trains the user to wave prompts through.
+   */
+  blocked?: string;
 }
 
 /** Token usage reported by a provider, when available. */

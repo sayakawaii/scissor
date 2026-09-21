@@ -534,6 +534,18 @@ Phase 0's measurement gates whether Phases 1+ are worth building.
   product work is `npm install && npm run demo` (no build, no key).
   (`providers/scripted.ts`, `cli/demo/scenario.ts`, `commands/demo.ts`;
   deterministic `scripts/test-demo.mts`.)
+- [x] **Second demo scenario (`--scenario safety`)**: the command classifier
+  refusing a dead-end command, an approval prompt being declined, and the agent
+  finishing the job a scoped way instead of retrying variations. The refusal is
+  produced by the real classifier; a scenario declares the verdicts it depends
+  on and the demo aborts if they ever change, so a scripted destructive command
+  cannot reach a shell after a safety regression.
+- [x] **Denied commands no longer prompt.** `preview.blocked` lets a tool say
+  "there is no answer that makes this runnable"; the approval gate refuses those
+  outright instead of asking a question whose answer it ignores. Previously a
+  `deny` verdict set `dangerous`, so the user was prompted and the command was
+  refused anyway — which contradicted the documented dead-end principle and
+  trained people to wave prompts through.
 - [x] `-m, --model <name>` pins a model per session (the plumbing the benchmark
   arms already needed, surfaced as a flag the README had been promising).
 

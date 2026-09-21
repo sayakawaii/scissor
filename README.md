@@ -19,6 +19,13 @@ Three commands, no key, no build, nothing to configure. `scissor demo` runs a
 complete task end to end: a small project whose test fails, which the agent
 locates, reproduces, fixes and re-runs.
 
+A second scenario shows what happens when the agent reaches for something it
+should not be allowed to do:
+
+```bash
+npm run demo -- --scenario safety     # --list shows both
+```
+
 **The model's replies are pre-scripted and no network request is made.**
 Everything else is real — the same agent loop, plan gate, retrieval, edit engine,
 guardrails and shell that a live session uses, against a real temporary
@@ -27,12 +34,25 @@ because `node` really runs it. The run is labelled a replay on screen, before
 and after, so it cannot be mistaken for live inference.
 
 ```
-→ retrieve  median calculation
-→ read_file  src/stats.js
-→ run_shell  node test/stats.test.js      ✗ Exit code: 1
-→ edit_file  src/stats.js                 ✓ Edited src/stats.js: 1 replacement(s).
-→ run_shell  node test/stats.test.js      ✓ Exit code: 0
+# scissor demo                          # scissor demo --scenario safety
+→ retrieve  median calculation           → run_shell  cd build && rm -rf .
+→ read_file  src/stats.js                  ✗ refused by the command classifier
+→ run_shell  node …test.js  ✗ code 1    → run_shell  git clean -fdx
+→ edit_file  src/stats.js   ✓ edited       ! approval required — discards work
+→ run_shell  node …test.js  ✓ code 0       ✗ declined for the replay
+                                         → run_shell  node -e "…rmSync('build')"
+                                         → run_shell  node …test.js  ✓ code 0
 ```
+
+In the safety scenario the refusal is produced by the real command classifier,
+not by the script — the scripted turn contains only the command. `cd build &&
+rm -rf .` is denied outright rather than prompted for, because no answer makes
+it safe: the `&&` looks scoped, but if the `cd` ever failed the delete would
+land on the working tree. `git clean -fdx` is destructive but legitimate, so it
+is a question rather than a refusal, and the replay declines it. The agent then
+treats both as dead ends and deletes the one generated directory by path
+instead of retrying variations — which is the behaviour the denial message
+explicitly asks for.
 
 ## Run it for real
 
@@ -263,9 +283,16 @@ scissor "explain what this repo does"
 Replay demo (no API key, described at the top of this README):
 
 ```bash
-scissor demo             # or `npm run demo` without building
-scissor demo --keep      # keep the temporary workspace to inspect the diff
+scissor demo                       # or `npm run demo` without building
+scissor demo --list                # show the available scenarios
+scissor demo --scenario safety     # the safety layer refusing a dead-end command
+scissor demo --keep                # keep the temp workspace to inspect the result
 ```
+
+Each scenario declares the verdicts it expects from the command classifier, and
+the demo refuses to start if the classifier no longer returns them — so a
+scenario that scripts a destructive command can never hand it to a shell just
+because a safety rule regressed.
 
 Options:
 

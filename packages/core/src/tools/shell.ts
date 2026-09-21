@@ -163,6 +163,9 @@ export const runShellTool: Tool = {
       // 'all' leaves the sandbox, so it always goes to the user regardless of
       // how innocuous the command line looks.
       dangerous: verdict.kind !== "allow" || escalations.includes("all"),
+      // A denied command is a dead end, not a question: surface it so the
+      // approval gate refuses instead of prompting. run() re-checks anyway.
+      ...(verdict.kind === "deny" ? { blocked: denialMessage(cmd, verdict) } : {}),
     };
   },
   async run(args, ctx: ToolContext) {

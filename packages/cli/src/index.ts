@@ -230,6 +230,8 @@ program
 program
   .command("demo")
   .description("run a full coding task end to end with no API key (scripted model replies)")
+  .option("-s, --scenario <id>", "which scenario to run (default: fix-bug; --list to see all)")
+  .option("--list", "list the available scenarios and exit")
   .option("--dir <path>", "run in this directory instead of a fresh temp one (implies --keep)")
   .option("--keep", "keep the temporary workspace afterwards")
   .action(async (opts) => {

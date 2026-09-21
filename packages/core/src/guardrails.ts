@@ -274,6 +274,17 @@ export function createApprovalGuard(): Guardrail {
     async beforeTool(call, gctx) {
       const { tool, preview, policy, requestApproval } = gctx;
       if (!tool.mutating) return { allow: true };
+      // Categorically refused calls are a dead end, never a prompt: there is no
+      // answer that would let them run, so asking would be theatre and would
+      // teach the user that these prompts are noise. The tool refuses again on
+      // its own if this is ever reached another way.
+      if (preview?.blocked) {
+        return {
+          allow: false,
+          reason: "refused by safety policy",
+          result: { content: preview.blocked, isError: true },
+        };
+      }
       if (!mutatingNeedsApproval(policy, tool, preview, alwaysApproved)) return { allow: true };
       // No UI to ask. Previously this returned allow, which meant a headless run
       // executed exactly the calls we had decided needed a human — the check
