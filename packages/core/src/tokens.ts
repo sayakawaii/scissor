@@ -26,6 +26,7 @@ const CHARS_PER_TOKEN: Record<ProviderId, number> = {
   gpt: 3.6,
   deepseek: 3.4,
   glm: 3.0,
+  nebius: 3.4,
 };
 
 /** Used when the provider is unknown. */

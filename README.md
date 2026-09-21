@@ -2,7 +2,7 @@
 
 A personal, Cursor-like terminal AI coding agent for Windows (and cross-platform). Chat with an LLM that can read, search, edit files and run commands in your current directory. No login, no plugin marketplace — just a fast local agent (with optional MCP tools).
 
-Supports four providers out of the box: **DeepSeek**, **Claude (Anthropic)**, **OpenAI GPT**, and **GLM (Zhipu)**.
+Supports five providers out of the box: **DeepSeek**, **Claude (Anthropic)**, **OpenAI GPT**, **GLM (Zhipu)**, and **Nebius Token Factory** (NVIDIA Nemotron open models).
 
 ## Architecture
 
@@ -43,7 +43,7 @@ flowchart TB
   end
 
   subgraph EXT["external"]
-    llm["LLM APIs · DeepSeek / Claude / GPT / GLM"]
+    llm["LLM APIs · DeepSeek / Claude / GPT / GLM / Nemotron"]
     mcps["MCP servers"]
     ws["workspace files + shell"]
   end
@@ -165,7 +165,25 @@ node packages/cli/dist/index.js config
 npm run dev -- config
 ```
 
-Environment variables override stored keys: `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GLM_API_KEY`, and `SCISSOR_PROVIDER`.
+Environment variables override stored keys: `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GLM_API_KEY`, `NEBIUS_API_KEY`, and `SCISSOR_PROVIDER`.
+
+### Nebius Token Factory (NVIDIA Nemotron)
+
+Token Factory serves NVIDIA's open Nemotron models behind an OpenAI-compatible
+API, so it plugs into the same adapter as the other OpenAI-style providers. Set
+`NEBIUS_API_KEY` (or add the key via `scissor config`) and pick the provider:
+
+```bash
+NEBIUS_API_KEY=... scissor -p nebius "explain what this repo does"
+```
+
+Defaults route the cheap tier to `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` and the
+strong tier to `nvidia/nemotron-3-super-120b-a12b`, so the router is a real
+cheap/strong split on a single key. `nvidia/Nemotron-3-Ultra-550b-a55b` is
+available as a per-session override (`--model`) or via config. Models are
+region-pinned upstream; the global endpoint routes for you, but you can pin a
+region by setting `providers.nebius.baseURL` to
+`https://api.tokenfactory.us-central1.nebius.com/v1`.
 
 ## Usage
 
@@ -183,7 +201,7 @@ scissor "explain what this repo does"
 
 Options:
 
-- `-p, --provider <id>` — choose `deepseek | claude | gpt | glm`
+- `-p, --provider <id>` — choose `deepseek | claude | gpt | glm | nebius`
 - `--safe` — confirm every file change and command
 - `--auto` — run everything automatically (only confirm dangerous actions)
 - `--chat-only` — disable file edits and command execution

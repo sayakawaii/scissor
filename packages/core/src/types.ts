@@ -4,7 +4,7 @@
  */
 import type { SandboxPolicy } from "./sandbox/policy.js";
 
-export type ProviderId = "deepseek" | "claude" | "gpt" | "glm";
+export type ProviderId = "deepseek" | "claude" | "gpt" | "glm" | "nebius";
 
 export type MessageRole = "system" | "user" | "assistant" | "tool";
 

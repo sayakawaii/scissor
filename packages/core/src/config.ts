@@ -100,9 +100,19 @@ export const PROVIDER_DEFAULTS: Record<
     baseURL: "https://open.bigmodel.cn/api/paas/v4",
     kind: "openai",
   },
+  // NVIDIA Nemotron served on Nebius Token Factory (OpenAI-compatible). Models
+  // are region-pinned upstream (Nano in eu-north1, Super/Ultra in us-central1);
+  // the global endpoint routes for you, but a regional base URL such as
+  // https://api.tokenfactory.us-central1.nebius.com/v1 can be set in config.
+  nebius: {
+    label: "Nebius Token Factory (NVIDIA Nemotron)",
+    model: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+    baseURL: "https://api.tokenfactory.nebius.com/v1",
+    kind: "openai",
+  },
 };
 
-export const PROVIDER_IDS: ProviderId[] = ["deepseek", "claude", "gpt", "glm"];
+export const PROVIDER_IDS: ProviderId[] = ["deepseek", "claude", "gpt", "glm", "nebius"];
 
 /**
  * Default "strong" tier model per provider, used by the router when the strong
@@ -114,6 +124,9 @@ export const PREMIUM_MODELS: Record<ProviderId, string> = {
   claude: "claude-sonnet-4-20250514",
   gpt: "gpt-4o",
   glm: "glm-4-plus",
+  // Super is the tool-calling/multi-agent tier; Ultra (nvidia/Nemotron-3-Ultra-550b-a55b)
+  // is stronger but ~3x the price, so it stays an explicit per-session override.
+  nebius: "nvidia/nemotron-3-super-120b-a12b",
 };
 
 const DEFAULT_CONFIG: ScissorConfig = {
@@ -170,6 +183,7 @@ export function applyEnvOverrides(config: ScissorConfig): ScissorConfig {
     claude: "ANTHROPIC_API_KEY",
     gpt: "OPENAI_API_KEY",
     glm: "GLM_API_KEY",
+    nebius: "NEBIUS_API_KEY",
   };
   for (const id of PROVIDER_IDS) {
     const envKey = process.env[envMap[id]];
